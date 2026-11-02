@@ -1,0 +1,155 @@
+### app.py
+--- app.py.bak_pending_stale_20261024-1640	2026-10-24 16:38:28.414224100 +0800
++++ app.py	2026-10-24 16:39:02.379512000 +0800
+@@ -514,7 +514,7 @@
+         "runs": runs[::-1],
+         "active_runs": runner.MANAGER.list(limit=10),
+         "schedule": scheduler.load(),
+-        "pending_translation": _read_pending_translation(),
++        "pending_translation": _pending_snapshot(),
+         "diagnostics": config.diagnostics(),
+         "day": day,
+         "batch": pipeline_ops.batch_brief(),
+@@ -755,6 +755,11 @@
+             encoding="utf-8")
+     elif PENDING_TRANS_FILE.exists():
+         PENDING_TRANS_FILE.unlink()
++    # 同步 mtime 签名：显式刷新过就别让 _pending_snapshot() 再扫一遍
++    try:
++        _PENDING_SIG["mtime"] = Path(ledger).stat().st_mtime if ledger else 0.0
++    except (OSError, TypeError, ValueError):
++        pass
+     return len(items)
+ 
+ 
+@@ -767,16 +772,58 @@
+         import json as _json
+         d = _json.loads(PENDING_TRANS_FILE.read_text(encoding="utf-8"))
+         if not d.get("total"):
+-            return {"total": 0}
++            return {"total": 0, "ok": True}
+         counts: dict[str, int] = {}
+         for it in (d.get("items") or []):
+             name = (it or {}).get("account") or "未知"
+             counts[name] = counts.get(name, 0) + 1
+         by_account = [{"account": k, "count": v}
+                       for k, v in sorted(counts.items(), key=lambda kv: -kv[1])][:8]
+-        return {"total": d.get("total", 0), "ts": d.get("ts"), "by_account": by_account}
++        ts = float(d.get("ts") or 0)
++        # ★ 2026-10-24（修「待翻译 9 条」常驻）：必须下发快照龄期。
++        #   队列只由 webapp 自己的 3 个入口重建，真正写 N 列的是外部巡检 automation，
++        #   没有 age_s 前端就无法区分「真的待译」与「过期快照」→ 只能永久显示 9 条。
++        return {"total": d.get("total", 0), "ts": d.get("ts"), "ok": True,
++                "age_s": round(time.time() - ts, 1) if ts else None,
++                "by_account": by_account,
++                "truncated": len(counts) > len(by_account),
++                "by_account_total": len(counts)}
++    except FileNotFoundError:
++        # 队列文件不存在 = 待译已清零（_refresh 空结果会 unlink）→ 正常态，不是读取失败
++        return {"total": 0, "ok": True}
+     except Exception:
+-        return {"total": 0}
++        # 读不出来 ≠ 没有待译：用 ok=False 让前端能区分「真的 0」与「读失败」
++        return {"total": 0, "ok": False}
++
++
++# ★ 2026-10-24（A 方案：按台账 mtime 惰性重扫）
++#   背景：pending_translation.json 是台账的物化快照，重建入口只有 3 个本地调用点
++#   （/api/translation/pending、台账同步后钩子、auto_translate 完成）。而真正写 N 列的是
++#   外部「待译巡检 automation」——它直写 xlsx，不回调本服务 → 快照只增不减，
++#   台账已全部译完仍会显示「待翻译 9 条」（实测陈旧 66 分钟）。
++#   这里以台账 mtime 作失效信号：任何写入方都会在下一次 overview 自动纠正，
++#   只在 mtime 变化后付一次全表扫描成本（实测 720ms，外层另有 5s overview 缓存）。
++_PENDING_LOCK = threading.Lock()
++_PENDING_SIG = {"mtime": -1.0}
++
++
++def _pending_snapshot() -> dict:
++    """台账变了才重算待译队列，然后返回摘要。没变则纯读缓存文件（零扫描）。"""
++    try:
++        mt = Path(config.ledger_path()).stat().st_mtime
++    except (OSError, TypeError, ValueError):
++        mt = 0.0
++    with _PENDING_LOCK:
++        # ★ mt=0（台账不存在或被 Excel 独占）时不清队列：
++        #   宁可短暂显示旧值，也不能误报「全部已译」把真待译藏掉。
++        if mt and mt != _PENDING_SIG["mtime"]:
++            try:
++                _refresh_pending_translation()
++            except Exception as e:
++                print(f"[pending] 台账重扫失败（保留旧队列）: {e}", flush=True)
++            else:
++                _PENDING_SIG["mtime"] = mt
++    return _read_pending_translation()
+ 
+ 
+ # ────────────────────────── 手动翻译回填（2026-10-16 新增）──────────────────────────
+
+### static/app.js
+--- static/app.js.bak_pending_stale_20261024-1640	2026-10-24 16:38:28.742648500 +0800
++++ static/app.js	2026-10-24 16:39:30.992563700 +0800
+@@ -1061,6 +1061,8 @@
+ /* P2-3：openLedgerSheet 已删除（全站无调用方；入口统一走 openAccountLedger / openSheetView） */
+ 
+ function renderDiag(dg, pend, sh) {
++  // 待译快照龄期：超 30 分钟视为可能过期（台账外部写入不会回调本服务）
++  const pq = (lastOv && lastOv.pending_translation) || {};
+   const items = [
+     ["pipeline 目录", dg.pipeline_exists],
+     ["解释器", dg.python_exists],
+@@ -1087,7 +1089,10 @@
+     `<span class="sl-item ${bad ? "bad" : "ok"}"><i class="sl-dot"></i>环境${bad ? ` ${bad} 项未就绪` : "就绪"}</span>` +
+     `<span class="sl-sep"></span><span class="sl-item">台账：${esc(ledger)}</span>` +
+     chan +
+-    (pend ? `<span class="sl-sep"></span><span class="sl-item warn"><i class="sl-dot"></i>待翻译 ${pend} 条</span>` : "") +
++    (pend ? `<span class="sl-sep"></span><span class="sl-item ${pq.age_s > 1800 ? "bad" : "warn"}"` +
++      ` title="${pq.age_s > 1800 ? "队列快照已过期：台账可能已被巡检改过，本数字只是旧的物化结果" : "台账「音频」有值而「翻译」为空"}">` +
++      `<i class="sl-dot"></i>待翻译 ${pend} 条` +
++      `${pq.age_s > 1800 ? `（${Math.round(pq.age_s / 60)} 分钟未刷新）` : ""}</span>` : "") +
+     (bad ? `<span class="sl-sep"></span><span class="sl-item">${items.filter(([, v]) => !v).map(([k]) => esc(k)).join("、")}</span>` : "") +
+     `<a class="sl-link" href="#pipe-panel">诊断详情</a>`;
+ }
+@@ -1132,6 +1137,10 @@
+ 
+ function renderOverviewHead(d, pend) {
+   const accs = d.accounts || [];
++  // ★ 2026-10-24：待译数字来自队列快照，必须带龄期一起看 —— 台账被外部（巡检 automation）
++  //   写过之后快照可能已过期，只显示条数会把「已译完」渲染成「9 条待译」。
++  const pq = d.pending_translation || {};
++  const pendStale = !!(pend && pq.age_s > 1800);
+   const enabled = accs.filter((a) => a.enabled !== false);
+   const disabled = accs.filter((a) => a.enabled === false);
+   const err = enabled.filter((a) => a.severity === "error");
+@@ -1188,8 +1197,11 @@
+             cls: day.failed ? "warn" : "", spark: (day.series || []).length > 1, trend },
+       { k: "todo", l: "待处理", v: todo, u: "条", cap: `异常 ${err.length} · 缺口 ${warn.length}`,
+         cls: err.length ? "bad" : warn.length ? "warn" : "", go: "" },
+-      { k: "trans", l: "待翻译", v: pend, u: "条", cap: pend ? "巡检 15min 内回填" : "全部已译",
+-        cls: pend ? "warn" : "", go: "" },
++      { k: "trans", l: "待翻译", v: pend, u: "条",
++        cap: !pend ? (pq.ok === false ? "队列读取失败，数字不可信" : "全部已译")
++          : pendStale ? `队列 ${Math.round(pq.age_s / 60)} 分钟未刷新，可能已过期`
++            : "巡检 15min 内回填",
++        cls: !pend ? (pq.ok === false ? "bad" : "") : (pendStale ? "bad" : "warn"), go: "" },
+       { k: "acc", l: "账号", v: enabled.length, u: "个", cap: `停用 ${disabled.length}（不计入覆盖）`, cls: "", go: "accounts" },
+       { k: "newv", l: "今日新视频", v: newToday, u: "条",
+         cap: `覆盖 ${Number(day.accounts_covered) || 0}/${Number(day.accounts_total) || enabled.length} 账号`, cls: "", go: "" },
+@@ -1304,9 +1316,16 @@
+       `<div id="ov-scan" class="ov-scan muted">正在检查可自动修复项…</div>`;
+   } else if (key === "trans") {
+     title = "待翻译分布";
+-    const by = ((d.pending_translation || {}).by_account) || [];
++    const pq = d.pending_translation || {};
++    const by = pq.by_account || [];
++    const ageMin = pq.age_s ? Math.round(pq.age_s / 60) : 0;
+     body = _ovRows("全部已译", by.map((x) =>
+-      `<tr><td>${esc(x.account)}</td><td class="num">${x.count} 条</td></tr>`));
++      `<tr><td>${esc(x.account)}</td><td class="num">${x.count} 条</td></tr>`)) +
++      (by.length
++        ? `<div class="ov-scan muted">队列快照 ${ageMin ? `${ageMin} 分钟前` : "刚刚"}重算` +
++          (pq.truncated ? ` · 共 ${pq.by_account_total} 个账号，仅列前 ${by.length} 个` : "") +
++          `</div>`
++        : "");
+   } else if (key === "acc") {
+     title = "账号启用情况";
+     const dis = (d.accounts || []).filter((a) => a.enabled === false);

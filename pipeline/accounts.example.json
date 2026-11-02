@@ -1,0 +1,33 @@
+{
+  "xlsx": "D:/your-project/ledger/benchmark.xlsx",
+  "metrics_file": "D:/your-project/ledger/daily_metrics.jsonl",
+  "reports_root": "D:/your-project/reports",
+  "recall_days": 2,
+  "gmv_enabled": false,
+  "accounts": [
+    {
+      "account": "example_account_1",
+      "lang": "en",
+      "active": true,
+      "region": "us",
+      "out_dir": "D:/your-project/tiktok/pipeline/output",
+      "audio_dir": "D:/your-project/tiktok/pipeline/output/example_account_1_audio"
+    },
+    {
+      "account": "example_account_2",
+      "lang": "de",
+      "active": true,
+      "region": "de",
+      "out_dir": "D:/your-project/tiktok/pipeline/output",
+      "audio_dir": "D:/your-project/tiktok/pipeline/output/example_account_2_audio"
+    },
+    {
+      "account": "example_account_3",
+      "lang": "en",
+      "active": false,
+      "region": "us",
+      "out_dir": "D:/your-project/tiktok/pipeline/output",
+      "audio_dir": "D:/your-project/tiktok/pipeline/output/example_account_3_audio"
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+/* ============================================================
+   a29.css · 账号管理 · 看板版（S236 落地版）
+   四列卡片流 + 全量核对表（表内滚动）+ 工具坞 + 口径
+   基础令牌来自 base.css / pal-extra.css，控件来自 acc-ui.css
+   ============================================================ */
+
+.a29 { --r: 12px; --r-s: 8px; }
+.a29-top { padding-bottom: 10px; border-bottom: 1px solid var(--line2); }
+.a29-top .backlink { font-size: 11.5px; color: var(--muted); text-decoration: none; margin-left: 10px; }
+.a29-top .backlink:hover { color: var(--accent); }
+
+.a29-head { display: grid; grid-template-columns: 1fr 1.25fr; gap: 20px; align-items: end; }
+.a29-find { padding: 0; }
+.a29-find h1 { font-size: clamp(20px, 1.75vw, 26px); }
+.a29-find-sub { font-size: 11.5px; }
+.a29 .u-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.a29 .u-kpis .k { padding: 10px 12px 8px; }
+.a29 .u-kpis .k-v { font-size: 24px; }
+
+/* 四列看板 */
+.a29-board { display: grid; grid-template-columns: 1.15fr 1.15fr 0.85fr 0.85fr; gap: 12px; align-items: start; }
+.a29-col { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); display: flex; flex-direction: column; min-width: 0; }
+.a29-col-h { display: flex; align-items: baseline; gap: 7px; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+.a29-col-h b { font-size: 12px; }
+.a29-col-h .tnum { font-size: 12px; font-weight: 700; color: var(--accent); }
+.a29-col-h .tiny { margin-left: auto; }
+.a29-col.warn .a29-col-h b { color: var(--warn); }
+.a29-col.off .a29-col-h b { color: var(--muted); }
+.a29-col-b { padding: 7px; display: flex; flex-direction: column; gap: 6px; max-height: 392px; overflow: auto; }
+.a29-card {
+  width: 100%; text-align: left; font: inherit; color: inherit; background: var(--surface2);
+  border: 1px solid var(--line); border-radius: var(--r-s); padding: 7px 9px; cursor: pointer;
+  transition: border-color var(--fast), transform var(--fast); min-width: 0;
+}
+.a29-card:hover { border-color: color-mix(in oklab, var(--accent) 45%, var(--line)); transform: translateY(-1px); }
+.a29-card.off { opacity: .68; }
+.a29-c-h { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.a29-c-h b { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.a29-c-h .chip { padding: 0 5px; font-size: 9px; }
+.a29-c-g { font-size: 9.5px; color: var(--muted); margin: 1px 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.a29-c-n { display: flex; gap: 10px; font-size: 9.5px; color: var(--muted); }
+.a29-c-n b { font-size: 11px; color: var(--ink); }
+.a29-c-f { display: flex; align-items: center; gap: 4px; margin-top: 4px; }
+.a29-ops { display: inline-flex; gap: 1px; }
+.a29-c-f .bl { font-size: 9.5px; padding: 0 3px; }
+.a29-c-f .chip { margin-left: auto; padding: 0 5px; font-size: 9px; }
+.a29-more { text-align: center; padding: 3px; }
+
+/* 核对表 */
+.a29-table .mod-b { padding-bottom: 8px; }
+.a29-table .acct-tbl th, .a29-table .acct-tbl td { padding: 4px 7px; font-size: 11.5px; }
+.a29-table .acct-tbl .as { display: none; }
+.a29-table .acct-tbl .rowops .bl { padding: 0 3px; }
+.a29-table .acct-tbl thead th { position: sticky; top: 0; z-index: 2; }
+.a29-scroll { max-height: 486px; overflow: auto; }
+.a29-scroll .acct-tbl { border-collapse: separate; border-spacing: 0; }
+
+/* 工具坞 */
+.a29-low { display: grid; grid-template-columns: 1.05fr 1.35fr 1fr 0.85fr; gap: 12px; align-items: start; }
+.a29-low2 { display: grid; grid-template-columns: 1.15fr 1fr 1.05fr; gap: 12px; align-items: start; }
+.a29-low .mod-h, .a29-low2 .mod-h, .a29-table .mod-h { padding: 9px var(--pad) 7px; }
+.a29-low .mod-h h2, .a29-low2 .mod-h h2, .a29-table .mod-h h2 { font-size: 12px; }
+.a29-low .u-detail { padding: 12px; }
+.a29-low .u-detail-nums { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 8px; }
+.a29-low .u-detail-kv { gap: 3px 8px; font-size: 11px; }
+.a29-low .u-detail-gaps { margin-top: 7px; gap: 4px; }
+.a29 .uf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; }
+.a29 .ff-h { display: none; }
+.a29 .imp-ta { min-height: 64px; }
+.a29 .u-ops { gap: 5px; }
+.a29 .op-grp .btn { padding: 3px 7px; }
+.a29 .gb { padding: 1px 3px; }
+.a29 .gb-n { width: 82px; font-size: 11px; }
+.a29 .u-gbars { gap: 1px; }
+.a29 .tp-protect { font-size: 10px; }
+
+/* 顶部状态条 */
+.a29-status { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--ink2); margin-top: 6px; }
+.a29-status .dot { flex: none; }
+.a29-status .grow { flex: 1; }
+.a29-status .btn { font-size: 11px; padding: 3px 9px; }
+
+/* 空态 / 错态 */
+.a29-state { padding: 36px 12px; text-align: center; color: var(--muted); font-size: 12.5px; }
+.a29-state b { color: var(--ink); display: block; margin-bottom: 6px; font-size: 14px; }
+.a29-state .btn { margin-top: 10px; }
+
+@media (max-width: 1180px) {
+  .a29-head, .a29-board, .a29-low, .a29-low2 { grid-template-columns: 1fr; }
+}

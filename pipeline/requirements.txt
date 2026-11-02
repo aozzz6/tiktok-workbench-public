@@ -1,0 +1,31 @@
+# TikTok 对标工作台 · pipeline 的直接依赖（crew T-01，2026-11-02）
+#
+# 只列 pipeline 代码真正 import 的包，版本取自本机 pipeline\.venv 的 pip freeze。
+# 间接依赖（av / tokenizers / tiktoken / huggingface_hub / numpy 等）交给 pip 自己解析，
+# 所以这里不抄整份 freeze —— 抄进来几百行反而没人维护。
+#
+# 装法（Windows + Python 3.13）。注意：仓库里没有命令会替你建 pipeline\.venv
+# （webapp\install.bat 只建 webapp\.venv），所以第一步得自己来：
+#   py -3.13 -m venv pipeline\.venv
+#   pipeline\.venv\Scripts\python.exe -m pip install -r pipeline\requirements.txt
+#
+# 下面那行 --extra-index-url 是为 torch 准备的：torch==2.7.0+cpu 是 CPU 轮子，
+# PyPI 上没有这个版本（PyPI 的 2.7.0 是 CUDA 版，体积大得多），它只在 PyTorch 自己的
+# CPU 索引里。这里用 --extra-index-url 而不是 --index-url：PyPI 仍是主索引，
+# 其余 6 个包照常从 PyPI 装，不会全被指到 PyTorch 索引去。
+# 本机实测：torch.__version__ == 2.7.0+cpu，torch.cuda.is_available() == False。
+#
+# 不在本清单里的两个（有意不列，因为 pipeline\.venv 里没有它们）：
+#   - scrapling：抓取层的可选首选实现，没有时 tiktok_fetch.py 自动退回 curl_cffi。
+#   - playwright：只有浏览器兜底（pw_detail_fallback.py / pw_uid_fallback.py）用，
+#     而且必须装在系统 Python 里，不是这个 venv。
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+openai-whisper==20250625
+faster-whisper==1.2.1
+ctranslate2==4.6.0
+torch==2.7.0+cpu
+yt-dlp==2026.8.19
+curl_cffi==0.16.3
+openpyxl==3.1.5

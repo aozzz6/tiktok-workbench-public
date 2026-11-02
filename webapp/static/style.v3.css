@@ -1,0 +1,385 @@
+/* ══════════════════════════════════════════════════════════════════
+   style.v3.css — UI 整改层（2026-10-22）
+   载入顺序：style.css → style.v2.css → style.v3.css
+   只做覆盖，不改旧规则。回滚：删掉 index.html 里的这一个 <link> 即可。
+   逐条对应 `_ui_audit_20261022` 审查报告的问题编号。
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── P0-4 表格：吸顶表头 + 横向滚动兜底 ─────────────────────────────
+   长表（视频明细 2278px）滚到第 30 行仍能看见列名。 */
+.table-wrap{overflow:auto;overscroll-behavior:contain}
+.table-wrap .tbl thead th{
+  position:sticky;top:0;z-index:3;
+  background:var(--card);
+  box-shadow:inset 0 -1px 0 var(--line);
+}
+.bv-wrap{max-height:min(72vh,620px)}
+#pipe-table>.table-wrap{max-height:min(72vh,540px)}
+.tbl td,.tbl th,.kpi-v,.stg-n,.mini-bar+p{font-variant-numeric:tabular-nums}
+/* 账号对比表：固定布局，否则标签列按内容把整表撑出容器（1109 > 1083，右侧列被裁） */
+.bench-tbl{table-layout:fixed}
+/* 2026-10-22 R3（独立验收）：style.css 里的 min-width:1080px 让 1280 桌面（容器 908）
+   必然横向滚动。默认改为「铺满容器」：列宽是百分比，表宽 100%，无 min-width。
+   只有「用户拖过列宽」或「视口窄于 1280」时才允许横向滚动 —— 后者保留 900px 兜底，
+   避免把 8 列压成 40px（1280 是本轮验收的窄桌面边界，必须铺满）。 */
+.bench-tbl{min-width:0;width:100%}
+@media(max-width:1279px){
+  .bench-tbl{min-width:900px}
+}
+/* R3：列宽收紧后表头右内边距 18px 会把「均互动率」挤成「均互动率…」，
+   手柄只要 9px，收到 12px 即可（数值列在 1280 下多出 6px 文字空间）。 */
+.bench-tbl thead th{padding-right:12px}
+
+/* R3：账号对比表头部的「重置列宽」按钮与提示同一行，提示可换行、按钮不挤 */
+.ba-head{display:flex;align-items:center;gap:12px;margin:0 0 6px}
+.ba-head .ba-hint{margin:0;flex:1 1 auto;min-width:0}
+.ba-head .btn{flex:0 0 auto;white-space:nowrap}
+
+/* R2：账号图里「未知」值用弱化色 + 斜体，与数字 0 区分 */
+#bv-accchart text.ba-unknown{fill:var(--sub,#6b7280);font-style:italic}
+.bv-legend .muted{margin-left:12px}
+
+/* ── P1-15 KPI：与其它区块统一为独立卡（原来是连体条 + 竖线） ──────── */
+.kpi-strip{
+  display:grid;grid-template-columns:repeat(4,1fr);
+  gap:12px;background:transparent;border:0;border-radius:0;overflow:visible;
+}
+.kpi{
+  background:var(--card);border:1px solid var(--line);border-radius:10px;
+  padding:14px 18px;
+}
+.kpi:first-child{border-left:1px solid var(--line)}
+.kpi-v .u{margin-left:4px}
+/* 数字统一深墨：4 个 KPI 全染琥珀等于没有重点，红色只留给真异常 */
+.kpi-v{color:var(--ink);font-weight:600}
+.kpi.warn .kpi-v{color:var(--ink)}
+.kpi.bad .kpi-v{color:var(--red)}
+
+/* ── P1-11 主按钮统一琥珀（原来「开始运行」是纯黑，与品牌色无关） ─── */
+.btn.primary{background:var(--pri);border-color:var(--pri);color:#fff}
+.btn.primary:hover{background:var(--pri-d);border-color:var(--pri-d);color:#fff}
+.btn.primary.accent{background:var(--pri);border-color:var(--pri)}
+
+/* ── P1-12 焦点环统一琥珀（原来是浅蓝 + 蓝色光晕两套） ────────────── */
+input:focus,select:focus,textarea:focus{
+  outline:2px solid var(--pri);outline-offset:0;
+  border-color:var(--pri);box-shadow:none;
+}
+.ra-inp:focus{outline:2px solid var(--pri);box-shadow:none}
+
+/* ── P1-16 原生 checkbox 上色 ──────────────────────────────────── */
+input[type=checkbox]{accent-color:var(--pri);width:14px;height:14px;cursor:pointer}
+
+/* ── P1-14 badge：不再被压成「启…」，计数角标改强调色（红色留给错误） ── */
+.badge{white-space:nowrap}
+.nav-badge{background:var(--pri);color:#fff;font-variant-numeric:tabular-nums}
+#auto-grid table{table-layout:fixed}
+#auto-grid th:nth-child(1){width:auto}
+#auto-grid th:nth-child(2){width:116px}
+#auto-grid th:nth-child(3){width:82px}
+#auto-grid th:nth-child(4){width:118px}
+
+/* ── P0-6 工具栏：换行后摘要与操作成组，不再孤零零掉到第二行 ───────── */
+.acct-toolbar{row-gap:8px;align-items:center}
+#bv-summary{margin-left:auto;font-variant-numeric:tabular-nums}
+.acct-toolbar .btn.ghost.sm{white-space:nowrap}
+
+/* ── P0-8 / P2-21 进度条：4px→6px，缺口语义只留红/琥珀 ────────────── */
+.stg-track{height:6px}
+.mini-bar{width:56px;height:6px;border-radius:4px}
+
+/* ── P0-7 多账户批跑：容器加高、单元横排、hover 有底 ──────────────── */
+.multi-acc-list{
+  max-height:300px;
+  grid-template-columns:repeat(auto-fill,minmax(152px,1fr));
+  gap:0 8px;padding:6px 8px;
+}
+/* ★ 表单里的 label 是竖排（标签在上、控件在下，`.form-row label` 特异性 0-1-1），
+   这里必须用 0-2-0 的选择器压回横排，否则 checkbox 独占一行、45 个账号挤成重叠的三行 */
+.multi-acc-list label.ma-item{
+  display:flex;flex-direction:row;align-items:center;justify-content:flex-start;
+  height:30px;padding:0 6px;border-radius:6px;gap:6px;
+  min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.multi-acc-list label.ma-item:hover{background:#f3f4f6}
+
+/* ── P0-1 待接管：诊断字段分组呈现，空队列时面板收紧 ───────────────── */
+.tk-panel.is-empty{padding-bottom:6px}
+.tk-panel.is-empty .tk-list{display:none}
+/* 标题与操作同一行，诊断信息换到第二行（原来标题/诊断/按钮挤成三行，按钮被甩到右下角） */
+.tk-panel .panel-head{flex-wrap:wrap;row-gap:8px}
+.tk-panel .panel-head>h2{order:1}
+.tk-panel .tk-actions{order:2;margin-left:auto}
+#tk-sub{
+  order:3;flex:1 1 100%;
+  display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;line-height:1.5;
+}
+#tk-sub .tk-kv{display:inline-flex;align-items:baseline;gap:5px;white-space:nowrap}
+#tk-sub .tk-k{color:var(--sub);font-size:11px}
+#tk-sub .tk-v{color:var(--ink);font-variant-numeric:tabular-nums}
+#tk-sub .tk-doubt{
+  flex:1 1 100%;color:var(--amber);
+  padding-left:8px;border-left:2px solid var(--amber);line-height:1.5;
+}
+
+/* ── P2-22 页头：副标题不再被右侧操作挤到断行 ─────────────────────── */
+.page-head>div:first-child{flex:1 1 auto;min-width:0}
+.page-head .page-sub{max-width:none;text-wrap:pretty}
+
+/* ── P1-17 图表：两卡等高；趋势折线改深墨（原来引入第二个强调色 teal） ─ */.bv-charts{align-items:stretch}
+.bv-charts>.panel{display:flex;flex-direction:column}
+.bv-charts .chart-box{flex:1 1 auto;min-height:280px;display:flex;flex-direction:column;justify-content:center}
+.bv-legend .sw{width:9px;height:9px}
+
+/* ── P2-22 提示词反推卡片：操作分组 + 危险操作分离 ────────────────── */
+.rv-acts{gap:6px;align-items:center}
+.rv-acts .btn[data-act="del"]{margin-left:12px}
+.rv-kv{
+  gap:6px 0;margin-top:10px;
+  padding:8px 0 0;border-top:1px solid var(--hair);
+}
+.rv-kv span{
+  padding-right:14px;margin-right:14px;
+  border-right:1px solid var(--line);
+}
+.rv-kv span:last-child{border-right:0;margin-right:0;padding-right:0}
+
+/* ── P2-20 账号表：行操作分组，删除与常规操作拉开距离 ─────────────── */
+.acct-ops{display:flex;justify-content:flex-end;gap:2px;flex-wrap:wrap}
+.acct-ops .btn-link.danger{margin-left:6px;border-left:1px solid var(--line);border-radius:0}
+
+/* ── P2-23 运行记录：标题两行、时间戳不换行 ───────────────────────── */
+.run-row{align-items:center}
+.run-row .t{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.run-row .tm{white-space:nowrap;font-size:11px}
+
+/* ── P2-18 分组区：说明文字收短后不再与搜索框争行 ─────────────────── */
+#grp-tabs{gap:8px 10px;flex-wrap:wrap}
+
+/* ── P2-19 泳道卡：`[hidden]` 的确认条不再占位成右上角那个「空圆角方块」 ── */
+.lane-confirm[hidden]{display:none}
+.cat-ops{display:flex;align-items:center;gap:8px}
+.cat-ops .ico-add{width:24px;min-width:24px;padding:0;justify-content:center;font-size:13px;color:var(--sub)}
+.cat-ops .ico-add:hover{color:var(--ink)}
+.lane-ops .lane-run{white-space:nowrap}
+
+/* ── P0-3 / P2-21 「图文历史」与账号名之间补上分隔，不再黏成一个词 ──── */
+.pipe-tbl td.acc .fx,.stg-name .fx,.bench-tbl td.acc .fx,.acct-tbl td.acc .fx{
+  margin-left:6px;padding:0 5px;border-radius:4px;
+  background:var(--raised);color:var(--sub);font-size:11px;font-weight:400;
+}
+
+/* ── P0-6 视频明细：列宽重分配后，链接列不再被压成一个省略号 ───────── */
+#bench-videos .vidcol a{white-space:nowrap}
+
+/* ── P2-23 自动化流程：状态列固定后，操作列不再和「需转交 Agent」抢行 ─ */
+#auto-grid .act{flex-wrap:nowrap}
+#auto-grid .as{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── 窄屏兜底：sticky 表头在这些容器里放弃，避免双滚动条 ───────────── */
+@media(max-width:760px){
+  .bv-wrap,#pipe-panel>.table-wrap{max-height:none}
+  .table-wrap .tbl thead th{position:static;box-shadow:none}
+  .kpi-strip{grid-template-columns:repeat(2,1fr)}
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   一键修复（2026-10-24）：待接管面板内的进度条与结果汇总
+   ══════════════════════════════════════════════════════════════════ */
+.rp-box{margin:10px 0 12px;padding:11px 13px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+.rp-box[hidden]{display:none}
+.rp-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.rp-head b{font-size:13px}
+.rp-phase{color:var(--sub);font-size:12px}
+.rp-nums{margin-left:auto;font-family:var(--font-data);font-size:13px;color:var(--ink)}
+.rp-nums b{font-size:14px}
+.rp-acts{display:flex;gap:8px;align-items:center;margin-left:auto}
+.rp-nums+.rp-acts{margin-left:10px}
+.rp-cur{flex:0 0 100%;margin-top:8px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--sub)}
+.rp-cur b{color:var(--ink);font-size:13px;font-family:var(--font-data)}
+.rp-cur .rp-step{font-family:var(--font-data);color:var(--sub);background:none;border:0;padding:0}
+.rp-track{height:6px;margin:9px 0 0;background:#e7e3dc;border-radius:4px;overflow:hidden}
+.rp-track i{display:block;height:100%;background:var(--pri);border-radius:4px;transition:width .35s var(--ease-out)}
+
+/* ── 多步骤阶段条（2026-10-24）：名称 + 顺序 + 占比 + 三态 ──────────────
+   一条底轨＋五个节点，底轨用 --rp-pct 填充（JS 每次轮询只更新这个变量与各 li 的
+   class，DOM 节点复用，所以过渡是连续的）。三态：已完成/进行中/未开始；
+   收口两态：失败（红）/ 已中止（灰）。 */
+.rp-flow-wrap{margin:12px 0 2px}
+.rp-flow-hd{display:flex;justify-content:space-between;align-items:baseline;
+  font-size:11px;color:var(--sub);letter-spacing:.02em}
+.rp-flow-pct{font-family:var(--font-data);font-size:12px;color:var(--ink)}
+.rp-flow{position:relative;display:flex;gap:8px;margin:8px 0 0;padding:0;list-style:none}
+.rp-flow::before,.rp-flow::after{content:"";position:absolute;left:0;top:11px;height:3px;border-radius:2px}
+.rp-flow::before{right:0;background:#e7e3dc}
+.rp-flow::after{width:var(--rp-pct,0%);max-width:100%;background:var(--pri);
+  transition:width .55s var(--ease-out),background .3s linear}
+.rp-flow-i{position:relative;flex:1 1 0;min-width:0;padding-top:26px;display:flex;
+  flex-direction:column;gap:1px;font-size:12px;color:var(--sub);
+  transition:color .3s ease,opacity .3s ease}
+.rp-flow-dot{position:absolute;left:0;top:5px;width:11px;height:11px;border-radius:50%;
+  background:var(--card);border:2px solid #cfc8bf;box-sizing:border-box;
+  transition:background .3s ease,border-color .3s ease,box-shadow .3s ease}
+.rp-flow-name{color:inherit;font-size:12px;line-height:1.35;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.rp-flow-w{font-family:var(--font-data);font-size:11px;color:var(--sub);opacity:.75}
+.rp-flow-st{font-size:11px;color:var(--sub);opacity:.85}
+/* 已完成：实心主色 + 深字 */
+.rp-flow-i.is-done{color:var(--ink)}
+.rp-flow-i.is-done .rp-flow-dot{background:var(--pri);border-color:var(--pri)}
+/* 进行中：空心 + 呼吸脉冲（只在真正推进时动，不闪） */
+.rp-flow-i.is-running{color:var(--ink);font-weight:600}
+.rp-flow-i.is-running .rp-flow-dot{border-color:var(--pri);background:var(--card);
+  animation:rp-flow-pulse 1.5s cubic-bezier(.4,0,.6,1) infinite}
+.rp-flow-i.is-running .rp-flow-st{color:var(--pri);opacity:1}
+/* 未开始：空心灰（不加动画，视觉上就该静） */
+.rp-flow-i.is-pending{opacity:.72}
+/* 收口：失败/中止 —— 停在哪一步一眼可见 */
+.rp-flow-i.is-failed{color:var(--red)}
+.rp-flow-i.is-failed .rp-flow-dot{background:var(--red);border-color:var(--red)}
+.rp-flow-i.is-failed .rp-flow-st{color:var(--red);opacity:1}
+.rp-flow-i.is-stopped{color:var(--sub)}
+.rp-flow-i.is-stopped .rp-flow-dot{background:var(--sub);border-color:var(--sub)}
+.rp-flow-i.is-stopped .rp-flow-st{color:var(--sub);opacity:1}
+@keyframes rp-flow-pulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(180,83,9,.32)}
+  55%{box-shadow:0 0 0 6px rgba(180,83,9,0)}
+}
+/* 尊重系统「减少动态效果」：只保留状态色，不做位移动画 */
+@media (prefers-reduced-motion:reduce){
+  .rp-flow::after,.rp-flow-i,.rp-flow-dot,.rp-track i{transition:none}
+  .rp-flow-i.is-running .rp-flow-dot{animation:none;box-shadow:0 0 0 3px rgba(180,83,9,.18)}
+}
+.rp-sum{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px}
+.rp-chip{padding:2px 8px;border-radius:10px;font-size:12px;font-family:var(--font-data);border:1px solid var(--line)}
+.rp-chip.is-ok{color:var(--green);border-color:rgba(21,128,61,.28);background:rgba(21,128,61,.06)}
+.rp-chip.is-failed{color:var(--red);border-color:rgba(185,28,28,.28);background:rgba(185,28,28,.06)}
+.rp-chip.is-skipped{color:var(--sub);background:rgba(120,113,108,.06)}
+.rp-hint{color:var(--sub);font-size:12px}
+.rp-grp{margin-top:9px;border-top:1px dashed var(--line);padding-top:7px}
+.rp-grp>summary{cursor:pointer;font-size:12px;color:var(--sub);list-style:none}
+.rp-grp>summary::-webkit-details-marker{display:none}
+.rp-grp>summary::before{content:"▸";display:inline-block;width:12px;color:var(--sub)}
+.rp-grp[open]>summary::before{content:"▾"}
+.rp-items{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+.rp-item{display:flex;align-items:center;gap:9px;padding:5px 9px;border-radius:6px;background:rgba(120,113,108,.04);font-size:12px}
+.rp-item .rp-tag{flex:0 0 auto;padding:0 6px;border-radius:4px;background:var(--raised,#efece7);color:var(--sub);font-size:11px}
+.rp-item .rp-acc{font-family:var(--font-data);font-size:12px;color:var(--ink);flex:0 0 auto}
+.rp-item .rp-det{color:var(--sub);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rp-item .rp-st{flex:0 0 auto;font-size:11px;font-family:var(--font-data)}
+.rp-item .rp-dur{flex:0 0 auto;font-size:11px;color:var(--sub);font-family:var(--font-data);min-width:32px;text-align:right}
+.rp-item.is-failed{background:rgba(185,28,28,.05)}
+.rp-item.is-failed .rp-st{color:var(--red)}
+.rp-item.is-failed .rp-det{color:var(--red)}
+.rp-item.is-ok .rp-st{color:var(--green)}
+.rp-item.is-skipped .rp-st,.rp-item.is-pending .rp-st{color:var(--sub)}
+@media(max-width:760px){
+  .rp-nums{margin-left:0}
+  .rp-acts{width:100%;margin-left:0}
+  .rp-item .rp-det{white-space:normal}
+}
+
+/* ── 一键修复 · AI 层（2026-10-24）───────────────────────────────── */
+.tk-ai{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--sub);cursor:pointer;user-select:none}
+.tk-ai input{width:13px;height:13px;accent-color:var(--pri);cursor:pointer}
+.tk-ai input:disabled{cursor:not-allowed}
+.tk-ai:has(input:disabled){opacity:.5;cursor:not-allowed}
+.tk-sel{height:26px;max-width:150px;padding:0 6px;border:1px solid var(--line);border-radius:6px;
+  background:var(--card);color:var(--ink);font:inherit;font-size:12px;cursor:pointer}
+.tk-sel:focus{outline:none;border-color:var(--pri)}
+.tk-sep{width:1px;height:16px;background:var(--line);margin:0 2px}
+.rp-ai-line{margin-top:7px;font-size:12px;color:var(--sub);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rp-ai-line b{color:var(--ink);font-family:var(--font-data)}
+.rp-ai-line.is-busy{color:var(--pri-d)}
+.rp-ai-warn{color:var(--red);font-size:12px}
+.rp-ai{flex:0 0 auto;padding:0 5px;border-radius:4px;font-size:11px;font-family:var(--font-data);
+  background:rgba(30,64,175,.07);color:var(--blue);border:1px solid rgba(30,64,175,.18)}
+.rp-ai.is-warn{background:rgba(185,28,28,.06);color:var(--red);border-color:rgba(185,28,28,.22)}
+.rp-ai.is-weak{background:rgba(120,113,108,.07);color:var(--sub);border-color:var(--line)}
+@media(max-width:900px){
+  .tk-actions{row-gap:6px}
+  .tk-sel{max-width:120px}
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   总览 KPI 重构（2026-10-24）：6 卡 + 可下钻 + 运行态 + 假绿提示
+   背景：原来 4 张纯 <div> 不可点，「今日执行」标的是成功数、启用口径取错字段、
+   统计窗口只有 20 条且被单测污染 —— 详见 总览看板诊断_20261024.html
+   ══════════════════════════════════════════════════════════════════ */
+.kpi-strip{
+  grid-template-columns:repeat(6,minmax(0,1fr));
+  align-items:stretch;
+}
+/* 卡片是 <button>：重置按钮默认样式，保持卡片观感；hover 给「可以点」的暗示 */
+.kpi{
+  display:flex;flex-direction:column;gap:2px;
+  min-height:92px;text-align:left;font:inherit;color:inherit;cursor:pointer;
+  background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;
+  transition:border-color .18s var(--ease-out),box-shadow .18s var(--ease-out);
+}
+.kpi:hover{border-color:#d6cfc4;box-shadow:0 6px 16px -14px rgba(28,25,23,.65)}
+.kpi:focus-visible{outline:2px solid var(--pri);outline-offset:2px}
+.kpi.is-open{border-color:var(--pri);background:#fffbf4}
+.kpi-l{display:flex;align-items:center;gap:4px}
+.kpi-arrow{font-size:9px;color:var(--muted);opacity:0;transition:opacity .15s var(--ease-out)}
+.kpi:hover .kpi-arrow,.kpi.is-open .kpi-arrow,.kpi:focus-visible .kpi-arrow{opacity:1}
+.kpi-cap{font-size:11.5px;color:var(--sub);line-height:1.5}
+.kpi.is-live .kpi-v{color:var(--pri)}
+.kpi.is-err{border-color:var(--red);background:var(--red-l,rgba(185,28,28,.07));cursor:default}
+/* 7 日 sparkline：纯 div，无图表库；失败用红条区分 */
+.kpi-spark{display:flex;align-items:flex-end;gap:2px;height:15px;margin-top:auto;padding-top:5px}
+.kpi-spark i{flex:1;min-width:2px;background:var(--pri);opacity:.3;border-radius:1px}
+.kpi-spark i.has-fail{background:var(--red);opacity:.55}
+/* 运行中：底部流动高光（不是精确进度——多任务并行时本来就没有单一百分比） */
+.kpi-live{height:3px;margin-top:7px;border-radius:2px;overflow:hidden;
+  background:linear-gradient(90deg,transparent,var(--pri),transparent);
+  background-size:45% 100%;background-repeat:no-repeat;animation:ovLive 1.4s linear infinite}
+@keyframes ovLive{from{background-position:-45% 0}to{background-position:145% 0}}
+/* 首屏骨架：固定高度占位，数据回来后不再撑高页面（消 CLS） */
+.kpi.is-skel{pointer-events:none;cursor:default;border-color:var(--line);background:var(--card)}
+.kpi.is-skel>div{height:10px;border-radius:4px;background:#efece6;
+  animation:ovShim 1.3s ease-in-out infinite}
+.kpi.is-skel .kpi-l{width:46%}
+.kpi.is-skel .kpi-v{height:20px;width:62%;margin:7px 0 8px}
+.kpi.is-skel .kpi-cap{width:80%;height:9px}
+@keyframes ovShim{0%,100%{opacity:.55}50%{opacity:1}}
+/* 断连/过期警示条 */
+.ov-alert{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  margin:10px 0 0;padding:9px 13px;border:1px solid #f1c7c7;border-radius:8px;
+  background:var(--red-l,rgba(185,28,28,.07));color:var(--red);font-size:12.5px}
+.ov-alert[hidden]{display:none!important}
+.ov-alert b{font-weight:700}
+#ov-updated{font-variant-numeric:tabular-nums;transition:color .2s var(--ease-out)}
+#ov-updated.stale{color:var(--red);font-weight:650}
+/* 下钻抽屉：贴着 KPI 行展开，不跳页、不弹层 */
+.ov-detail{margin:10px 0 0;border:1px solid var(--line);border-radius:10px;background:var(--card);
+  padding:12px 14px;animation:ovDrop .22s var(--ease-out)}
+.ov-detail[hidden]{display:none!important}
+.ov-detail-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
+.ov-detail-head b{font-size:13px}
+.ov-detail-body{font-size:12.5px;color:#3f3a35}
+.ov-scan{margin-top:8px;font-size:12px}
+.ov-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.ov-tbl th,.ov-tbl td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.ov-tbl th{width:74px;color:var(--sub);font-weight:650;white-space:nowrap}
+.ov-tbl tr:last-child th,.ov-tbl tr:last-child td{border-bottom:0}
+.ov-tbl td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+@keyframes ovDrop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+/* 只播报给读屏：视觉上不可见，但不能 display:none（那样 aria-live 不生效） */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap;border:0}
+@media(max-width:1380px){.kpi-strip{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:760px){.kpi-strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(prefers-reduced-motion:reduce){
+  .kpi,.ov-detail,#ov-updated{transition:none;animation:none}
+  .kpi-live,.kpi.is-skel>div{animation:none}
+}
+
+/* 覆盖条：停用账号不再算「缺口」（口径与 KPI 的待处理一致） */
+.stg-st.off{color:var(--muted);opacity:.85}
+.stg-row:has(.stg-st.off){opacity:.72}
+/* KPI 里的环比小角标（替代塞进 caption 的第二行文字） */
+.kpi-trend{font-size:10.5px;font-weight:650;margin-left:5px;padding:0 4px;border-radius:4px;
+  background:rgba(21,128,61,.10);color:var(--green)}
+.kpi-trend.down{background:rgba(185,28,28,.09);color:var(--red)}
+.kpi-trend.flat{background:#f1f5f9;color:var(--muted)}

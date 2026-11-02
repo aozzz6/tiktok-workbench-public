@@ -1,0 +1,50 @@
+/* ============================================================
+   arch-e.css · A9 值守大屏 / A10 象限落点
+   ============================================================ */
+
+/* ── A9 大屏 ───────────────────────────────────────────── */
+.a9-top { display: flex; align-items: center; gap: 18px; padding: 4px 0 12px; }
+.a9-brand { display: flex; align-items: center; gap: 10px; }
+.a9-brand b { display: block; font-size: 15px; font-weight: 650; letter-spacing: -.01em; white-space: nowrap; }
+.a9-brand small { display: block; font-size: 9.5px; letter-spacing: .14em; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.a9-clock { font-family: var(--f-mono); font-size: clamp(20px, 2.2vw, 30px); font-weight: 600; letter-spacing: .02em; color: var(--accent); margin: 0 auto; font-variant-numeric: tabular-nums; }
+.a9-top-r { display: flex; align-items: center; gap: 12px; }
+.a9-top-r .stamp { font-size: 10.5px; color: var(--ink2); white-space: nowrap; display: inline-flex; gap: 6px; align-items: center; }
+.a9 .b-mega { margin-bottom: var(--gap); }
+.a9 .b-mega .mega { padding: 14px 16px 12px; }
+.a9 .b-mega .mega-v { font-size: clamp(34px, 3.6vw, 56px); }
+.a9-main { display: grid; grid-template-columns: minmax(0, 1.72fr) minmax(0, 1fr); gap: var(--gap); margin-bottom: var(--gap); align-items: start; }
+.a9-hero { min-width: 0; }
+.a9-side { display: grid; gap: var(--gap); align-content: start; min-width: 0; }
+.a9-side .b-prod, .a9-side .b-topv { padding: 6px 0; }
+.a9-band { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr); gap: var(--gap); margin-bottom: var(--gap); align-items: start; }
+.a9-band2 { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: var(--gap); margin-bottom: var(--gap-l); align-items: start; }
+.a9 .b-take-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.a9 .b-take-c p { font-size: 11.5px; }
+.a9-ticker { display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--line2); border-bottom: 1px solid var(--line2); padding: 7px 0; overflow: hidden; margin-top: 6px; }
+.a9-tk-l { flex: none; font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .14em; color: var(--accent); border: 1px solid color-mix(in oklab, var(--accent) 45%, var(--line)); border-radius: 3px; padding: 1px 6px; }
+.a9-tk-v { flex: 1; min-width: 0; display: flex; gap: 60px; white-space: nowrap; font-size: 11px; color: var(--ink2); animation: a9marq 46s linear infinite; }
+.a9-tk-v span { flex: none; }
+@keyframes a9marq { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .a9-tk-v { animation: none; } }
+
+/* ── A10 象限 ──────────────────────────────────────────── */
+.a10-hero { display: grid; grid-template-columns: minmax(0, 1.62fr) minmax(0, 1fr); gap: var(--gap); margin: var(--gap) 0 var(--gap-l); align-items: start; }
+.a10-hero .b-qi .mod-b { padding-bottom: 6px; }
+.a10-leg { display: grid; gap: 8px; min-width: 0; }
+.a10-q { border: 1px solid var(--line); border-radius: var(--r-s); padding: 8px 10px; background: var(--surface); }
+.a10-qh { display: flex; align-items: baseline; gap: 6px; }
+.a10-qh b { font-size: 11.5px; font-weight: 650; }
+.a10-qh span { font-size: 9.5px; }
+.a10-qn { margin-left: auto; font-size: 16px; font-weight: 700; }
+.a10-ql { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.a10-ql .b-tag { cursor: pointer; }
+.a10-note { margin-top: 2px; }
+.a10-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: var(--gap); margin-bottom: var(--gap); align-items: start; }
+.a10-row2 { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: var(--gap); margin-bottom: var(--gap); align-items: start; }
+.a10-row3 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); margin-bottom: var(--gap-l); align-items: start; }
+
+@media (max-width: 1180px) {
+  .a9-main, .a9-band, .a9-band2, .a10-hero, .a10-row, .a10-row2, .a10-row3 { grid-template-columns: 1fr; }
+  .a9-clock { margin: 0; }
+}

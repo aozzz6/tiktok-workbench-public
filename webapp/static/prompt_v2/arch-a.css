@@ -1,0 +1,51 @@
+/* ============================================================
+   arch-a.css · T1 中控台（T101–T110）
+   左 392px 输入列 + 右侧结果主区 + 底部历史/导出两栏
+   ============================================================ */
+
+.t1 .hd { padding-bottom: 2px; }
+.t1 .hd h1 { font-size: 24px; }
+
+.t1-main {
+  display: grid;
+  grid-template-columns: 392px minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+.t1-left, .t1-right { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
+
+/* 左列：输入三步——用序号把它们串起来 */
+.t1-left > .u-src, .t1-left > .u-prod, .t1-left > .u-mode { padding: 16px 16px 15px; }
+.t1-left .u-src .mod-h h2, .t1-left .u-prod .mod-h h2, .t1-left .u-mode .mod-h h2 { font-size: 12.5px; }
+.t1-left .u-src-grid { grid-template-columns: 1fr; gap: 10px; }
+.t1-left .u-src-meta { grid-template-columns: repeat(3, 1fr); }
+.t1-left .u-src-quote { padding-top: 8px; }
+.t1-left .u-src-quote .qt { max-height: 3.4em; overflow: hidden; }
+.t1-left .u-form { grid-template-columns: 1fr 1fr; gap: 9px 10px; }
+.t1-left .u-form .field:first-child { grid-column: span 2; }
+.t1-left .u-form .field:nth-child(2) { grid-column: span 2; }
+.t1-left .u-mode-grid { grid-template-columns: 1fr; gap: 12px; align-items: stretch; }
+.t1-left .u-mode-go { min-width: 0; }
+.t1-left .u-mode-foot { flex-wrap: wrap; row-gap: 2px; }
+.t1-left .u-mode-opts { flex-direction: row; align-items: center; gap: 8px; flex-wrap: wrap; }
+.t1-left .u-mode-opts .lab { display: none; }
+
+/* 右列：结果区——分析压扁，六版为主体，自检收尾 */
+.t1-right > .u-ana { padding: 15px 16px; }
+.t1-right .u-ana-body { grid-template-columns: 1fr 1.35fr; gap: 12px 20px; }
+.t1-right .u-vers { padding: 15px 16px 16px; }
+.t1-right .u-grid6 { gap: 11px; }
+.t1-right .u-ver { padding: 10px 11px 9px; }
+.t1-right .u-chk { padding: 14px 16px 12px; }
+.t1-right .u-matrix th:first-child { width: 190px; max-width: 190px; }
+
+/* 底部：历史 + 导出 */
+.t1-foot { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--gap); }
+.t1-foot .u-his, .t1-foot .u-exp { padding: 14px 16px; }
+.t1-foot .u-exp .mod-h { display: none; }
+.t1-foot .u-exp .mod-b { margin-top: 0; }
+
+@media (max-width: 1180px) {
+  .t1-main { grid-template-columns: 1fr; }
+  .t1-foot { grid-template-columns: 1fr; }
+}

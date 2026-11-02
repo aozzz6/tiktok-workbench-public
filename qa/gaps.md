@@ -1,0 +1,28 @@
+# QA 缺口清单（qa/gaps.md）
+
+维护人：PM。QA 在报告里写出「这里测不了 / 这里没测到」，由 PM 抄进这个文件。
+这个文件留在仓库里，随着以后的作业把缺口补上而**变短**；它不是验收材料，是**没被验证的东西**的台账。
+作业：`s2-scrape-failure-fix`（2026-11-02）
+
+| # | 缺口（什么没被测到） | 为什么 | 谁能补、怎么补 |
+|---|---|---|---|
+| 1 | 真实的 TikTok 链路没有自动化用例：真的去拉页面、真的拿到 `statusCode 10204 / author_status,status_reviewing` 与 `100001` 的响应 | 复现要连 TikTok + 走代理 `127.0.0.1:7897`，测试不该联网；2026-11-02 那次探针脚本留在 `%TEMP%\probe_s2.py`，没有进项目 | 固定 HTML 样例已覆盖字段解析（`pipeline\tests\test_scrape_failure_reason.py`）；真实链路只能在有代理的机器上手工跑一次 `--ids <一个视频ID>` |
+| 2 | `pipeline\accounts.json` 的**恢复流程从未演练** | 备份文件在 `_bak_deactivate_20261102\`，但没人真拿它恢复过一次；而且该文件与备份都被 `.gitignore` 排除，git 里没有它的历史 | 需要时演练一次：把备份复制回去，跑 `pipeline\tests\*` 与 `qa\T-01`。演练要在**不需要**它的日子里做，不是等出事那天 |
+| 3 | 「下一次日更 / 全量执行真的不再跑这个账号」只在 `load_accounts()` 层面验证过，没有真跑一次日更 | 真跑日更要连网抓取，代价大且有副作用 | 下一次 08:00 的日更 automation 自然验证；或手工核一次 `python -c "import sys; sys.path.insert(0,'webapp'); import config; print([a['account'] for a in config.load_accounts()['accounts']])"` 里没有该账号 |
+| 4 | 停用**是否真的经由** `webapp.config.set_account_active()` 完成，事后无法从仓库证明 | 函数调用后的文件状态与「手写 JSON 改 active」完全一样（同样 `json.dumps(indent=2)` 重写、同样 CRLF），没有调用日志、没有审计表 | `qa\T-01\cases.py` 的 C-05 只能证明「报告里写了这条命令」，**证明不了它真的跑过**。证据是 `qa\T-01\engineer-report.md`（报告原文落盘） |
+| 5 | 「先红后绿」的**红段**没有自动化核对：T-02 与 T-03 的红段只存在于报告文本里，没有任何用例去验它 | 红是「改动前那一刻」的产物，事后代码已经改了，重跑不出当时那份红 | T-04 是例外：它的红可以重跑（`qa\T-04\cases.py` 用钉死的基线提交 `d58d9ed` 真跑出 `FAILED (errors=2)`）。T-02/T-03 的红段见 `qa\T-02\engineer-report.md`、`qa\T-03\engineer-report.md`，只能人工核对 |
+| 6 | T-02 的 C-01 读的是 **stdout 摘要**，不是磁盘上的 `scrape_<账号>.json` | 本作业让「0 条有效不写盘」生效后，单条 10204 失败这次根本不落盘；验盘是 T-03 用例的活 | 要验「错误文本真的写进文件」，用 T-03 的入口配 T-02 的 HTML 样例即可 |
+| 7 | T-03 的 C-09 只做了清单里**机器可判定**的那一半（在内存里变异源码，证明 C-01/C-04/C-05/C-07 会红）；「改动前是真红」那半是文档证据 | 同第 5 条 | 人工核 `qa\T-03\engineer-report.md` 的红段（红 3/5，落在 DoD 1、3） |
+| 8 | T-04 的 C-04/C-05 是**静态模式识别**（AST）判「断言没被削弱」 | 静态检查的固有边界：①语义等价但写法不同的断言会被误判为红；②断言被挪进一个从不调用的嵌套函数里，`ast.walk` 仍会数到它，这种削弱判不出来。注意：写这条用例时在仓库**外**（`%TEMP%`）手工试过若干种弱化写法（据 QA 当时的会话报告，未留文件），都能判红，但那次手验**不在版本库里、事后无法重跑**，所以别以为它覆盖了全部写法 | 只能靠代码评审补 |
+| 9 | 抓取脚本「`--ids` 但不带 `--merge`/`--allow-overwrite`」的 fail-fast（退出码 2）**没有 QA 用例** | 清单没要求，本作业也没改那段 | 需要时在 `qa\T-03\` 或新目录补一条：传 `--ids` 不带 `--merge` 应退 2 且不写盘 |
+| 10 | 有的 DoD 条目本身是「报告里要给出…」，它的证据就是**报告文件**。四份现在都在版本库里：`qa\T-01\engineer-report.md`、`qa\T-02\engineer-report.md`、`qa\T-03\engineer-report.md`、`qa\T-04\engineer-report.md` | **但只有 T-01 与 T-04 的用例真的在读它们**：T-01 的 C-03/C-04/C-05/C-11/C-12 读 `qa\T-01\engineer-report.md`；T-04 的 `_find_report()` 优先读 `qa\T-04\engineer-report.md`。T-02 的 C-13 是 SKIP（只打印一句 note）、T-03 的 C-09 也不读报告——这两份**只能人工核**，删掉就是删证据 | 不要删这四个文件；它们的内容是「当时那一轮」的快照，不是可重跑的东西。T-02/T-03 的红段若要机器核对，得有人先写一条真正读报告的用例 |
+| 11 | **全失败不写盘会让页面看不到这次失败**：`webapp\app.py` 的 `scrape_errors` 取自该文件的 `errors`，`scrape_mtime` 取自该文件的 mtime，而 `app.py:493` 用「48 小时内有 mtime」决定健康度统计范围 | 这是「不毁掉历史」这个要求带来的真实代价：一个全失败的账号 `scrape_errors` 停在旧值、mtime 停在旧值，可能掉出健康度窗口，成功率看起来反而变好 | 失败本身仍记在 `webapp\data\runs.jsonl`、`pipeline\pipeline_state.json` 与 gate 报告。要让页面正确显示，正确修法是让健康度改读 `pipeline_state.json` —— 另一个作业。详见 `ADR-0001` 的「更正 1」 |
+| 12 | **全失败不写盘之后，`daily_update` 的慢速补抓看不到这一轮的失败条目**：`pipeline\daily_update.py:210-213` 每次日更后都跑 `retry_scrape_failed.py`，而它取待补 id 的地方是**目标文件的 `errors[]`**（`retry_scrape_failed.py:45`） | 文件没被写，里面是旧 errors，于是补抓会去补一批旧条目，这一轮真失败的条目一条也不补（下一次日更才会轮到它们）。本作业接受这一点，理由是另一边是直接毁数据 | 要修就得写一个旁路文件（如 `scrape_<账号>_lastfail.json`）并让补抓读它——那是用户可见的新行为，按 CRD 走。详见 `ADR-0001` 末段 |
+| 13 | **慢速补抓会把真实原因擦掉**：`pipeline\scripts\retry_scrape_failed.py` 第 79-80 行重写 `error` 时只用 `REASON_TEXT.get(reason)`，不带 `[statusCode …]`，然后把文件写回 | 这是本作业**没改**的文件（不在四个改动点里）。后果：凡是经过一次 `daily_update.py` 慢速补抓的条目，页面真实 `statusCode`/`statusMsg` 又变回「已下架/私有」——本作业第 2 条改动的收益被逐日抵消。默认定时任务是 `daily_batch.py`，它不跑补抓，所以默认路径不受影响；但旧的手工/网页「每日增量」路径会走到 `daily_update.py` | 改法很小：让 `retry_scrape_failed.py` 用 `parse_item_detail()` + `sc.failure_text()` 重写 error。属**用户可见行为**且不在已确认范围内，应先走 CRD |
+| 14 | 下面这些是 10a 代码评审、10b 安全评审与 15 文档评审报的 **optional（不阻塞）** 项，本作业**没有**加固，都还开着 | 都是「成本低、值得下一轮做」，但不在用户这次要的四件事里 | ① `failure_text()` 对远端 `statusMsg` 无长度上限、不洗控制字符与孤立代理项（孤立代理项会让 `json.dumps(ensure_ascii=False)` 后的写盘抛 `UnicodeEncodeError`，整脚本中止）；② `failure_text()` 把 `statusCode` 与 `statusMsg` 塞进同一个 `[statusCode …]` 槽位，只有 statusMsg 时标签会误导；③ `100001` 若整批命中，每条会多 1 次 HTTP 重试 + 8s，然后**全部**进 `browser_batch_fallback`（无条数上限，会起 playwright）；④ `_reason_of()` 在历史条目缺 `reason` 时用 `"下架" in error` 猜分类，现在 `error` 里含远端可控文本；⑤ `pipeline\tests\test_acceptance_regressions.py` 的 `scrape_run()` 没 patch `browser_batch_fallback`，将来 fixture 改成 `blocked` 会真的起浏览器；⑥ T-04 的 C-08 把「改动前」钉在提交 `d58d9ed` 上，该提交必须在仓库历史里一直可达（换仓库/浅克隆会 red，不会静默绿）；⑦ `qa\T-04\run.ps1` 含非 ASCII 但**没有** UTF-8 BOM（本机 PS 5.1 会按 GBK 读，目前只影响注释、不影响执行）；⑧ **`--allow-overwrite` 的逃生口在 0 条时失效**：帮助文字写着「确需覆盖：显式加 `--allow-overwrite`，自担风险」，但新的 `no_write` 判据不看它，用户明知历史是垃圾也覆盖不出一份 0 条文件——help 与行为不一致（PM 收尾验证时实测踩到：带 `--allow-overwrite` 仍然不写盘）。要修就是把它加进 `no_write` 的排除项，或改 help 说明「0 条时一律不写盘」 |
+
+| 15 | **上游私有仓库曾把一个会话凭据文件提交进 git** | 忽略规则当时覆盖不到它的名字；该文件已从上游索引移除，上游历史里仍有。公开版是全新历史，从头到尾没有这个文件 | 作者应作废那个会话（历史删不掉，只能让凭据失效）；公开版只从干净的导出目录发布 |
+| 16 | `webapp\config.py:32` 的注释写「**本地** LLM 自动翻译」，实际是**远程 HTTP API** | 模型配置来自 `~/.workbuddy/models.json`，默认取 `TM ·Auto`（`https://workbuddy.tokenmao.cn/v1`），退 `deepseek-flash`（`https://api.deepseek.com/v1`）—— 都有 apiKey 与 url，不是本机模型。而 `WB_AUTO_TRANSLATE` 默认开，所以**转写文本默认会发给第三方 API** | 注释该改成「远程 LLM」。这不是本作业造成的，两版 README 已按真实情况写明数据流；`config.py` 那条注释下次动那个文件时顺手改 |
+| 17 | **文档层遗留**：`DEPLOY_GUIDE.md` 至今写端口 `8787`、台账「15 列」 | 实际是 `8789`（`start.bat`/`wb_start.ps1` 设的）与 14 列（`desc_split.HEADER_14`、`config.EXPECTED_COLS`）；该文档是搬机指南，过期会让新机器起错端口 | 下一次动那份文档时顺手改；两版 README 里已标注「它已过期」 |
+
+作业收尾时复核本表：已闭环的行删除，本文件只留仍然成立的缺口。

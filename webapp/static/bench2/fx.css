@@ -1,0 +1,44 @@
+/* fx.css · 效果层样式（只在 fx 打开时生效） */
+
+/* 极光 */
+.fx-aurora { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.fx-aurora i { position: absolute; display: block; border-radius: 50%; filter: blur(72px); opacity: .5; mix-blend-mode: screen; }
+.fx-aurora .b1 { width: 52vw; height: 52vw; left: -12vw; top: -18vw; background: var(--accent); animation: fx1 24s ease-in-out infinite alternate; }
+.fx-aurora .b2 { width: 42vw; height: 42vw; right: -8vw; top: -6vw; background: var(--accent2); animation: fx2 30s ease-in-out infinite alternate; }
+.fx-aurora .b3 { width: 36vw; height: 36vw; left: 26vw; bottom: -20vw; background: color-mix(in oklab, var(--accent) 45%, var(--accent2)); animation: fx1 36s ease-in-out infinite alternate-reverse; }
+.fx-aurora .b4 { width: 22vw; height: 22vw; right: 16vw; bottom: 8vw; background: color-mix(in oklab, var(--accent2) 55%, var(--accent)); animation: fx2 20s ease-in-out infinite alternate-reverse; opacity: .32; }
+@keyframes fx1 { to { transform: translate3d(7vw, 5vw, 0) scale(1.14); } }
+@keyframes fx2 { to { transform: translate3d(-6vw, 7vw, 0) scale(1.1); } }
+html[data-fx~="aurora"] #stage { position: relative; z-index: 1; }
+html[data-fx~="aurora"] body { background: var(--bg); }
+
+/* 聚光跟随 */
+html.fx-spot .mod, html.fx-spot .u-find { position: relative; }
+html.fx-spot .mod::after,
+html.fx-spot .u-find::after,
+html.fx-spot .acc-card::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: radial-gradient(240px 180px at var(--mx, 50%) var(--my, 0%),
+    color-mix(in oklab, var(--accent) 16%, transparent), transparent 68%);
+  opacity: 0; transition: opacity .35s;
+}
+html.fx-spot .mod:hover::after,
+html.fx-spot .u-find:hover::after,
+html.fx-spot .acc-card:hover::after { opacity: 1; }
+
+/* 火花画布 */
+.fx-spark { position: fixed; inset: 0; z-index: 999; pointer-events: none; }
+
+/* 磁吸过渡 */
+html[data-fx~="magnet"] .btn,
+html[data-fx~="magnet"] .kb-card { transition: transform .18s var(--ease), border-color var(--fast), background var(--fast); }
+
+/* 流光标题 */
+html.fx-text h1 {
+  background: linear-gradient(100deg, var(--accent), var(--accent2), var(--accent));
+  background-size: 220% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: fxflow 9s linear infinite;
+}
+html.fx-text h1 b { color: inherit; }
+@keyframes fxflow { to { background-position: 220% 0; } }

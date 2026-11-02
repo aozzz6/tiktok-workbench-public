@@ -1,0 +1,4 @@
+/* AI 接入 · 该屏样式已迁到 paper-ai.css（2026-10-28 S041 纸本重构）
+   本文件保留为空壳，只为兼容旧缓存与回滚路径：
+   - 纸本令牌与组件：/static/paper-ai.css
+   - 若要回滚到 20261028A 版本，还原 ai_admin.js/css 与 index.html 即可。 */

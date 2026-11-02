@@ -1,0 +1,53 @@
+const {chromium}=require('playwright-core');
+const fs=require('fs'),path=require('path');
+const out=process.argv[2],fixture=JSON.parse(fs.readFileSync(path.join(out,'fixture.json'),'utf8'));
+const results=[],errors=[];
+function check(name,pass){results.push({name,pass:!!pass});console.log(pass?'PASS':'FAIL',name);}
+(async()=>{
+ const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,args:['--no-proxy-server']});
+ try{
+  const ctx=await browser.newContext({viewport:{width:1440,height:1050},permissions:['clipboard-read','clipboard-write'],acceptDownloads:true});
+  const page=await ctx.newPage();page.on('pageerror',e=>errors.push(e.message));let generations=0,checks=0,lastCheck=null,failCheck=false;
+  await page.route('**/api/prompt-optimizer/generate',r=>{generations++;return r.fulfill({status:200,contentType:'application/json',body:JSON.stringify(fixture)});});
+  await page.route('**/api/prompt-optimizer/self-check',r=>{checks++;lastCheck=r.request().postDataJSON();return failCheck?r.fulfill({status:502,contentType:'application/json',body:JSON.stringify({detail:'验收模拟自检不可用'})}):r.continue();});
+  await page.goto('http://127.0.0.1:8789/#prompt',{waitUntil:'networkidle'});await page.waitForSelector('#po-source');
+  for(const k of ['source','product','facts','duration'])await page.locator(`[data-po-field="${k}"]`).fill(String(fixture.input[k]));
+  await page.selectOption('#po-language-choice',fixture.input.language);await page.selectOption('[data-po-field="ratio"]',fixture.input.ratio);
+  await page.locator('#po-generate').click();await page.waitForSelector('.po-version-check');
+  check('生成自动附带六份逐版报告',await page.locator('.po-version-check').count()===6);
+  check('自动报告不新增模型与自检请求',generations===1&&checks===0);
+  check('整体状态明确需人工确认',await page.locator('.po-audit>.po-section-head .po-check-badge').innerText()==='需人工确认');
+  await page.locator('.po-version-check summary').first().click();
+  check('逐版规则通过但保留人工核对项',await page.locator('.po-version-check').first().innerText().then(s=>s.includes('产品事实核对')&&s.includes('语言与故事质量')&&s.includes('成片效果')&&s.includes('通过')));
+  await page.locator('.po-audit-comparison summary').click();check('六版对比覆盖15组且有相似度',await page.locator('.po-check-table tbody tr').count()===15&&await page.locator('.po-check-table').innerText().then(s=>s.includes('相似度')));
+  await page.locator('.po-audit').screenshot({path:path.join(out,'桌面_自检报告详情.png')});
+  await page.locator('.po-version-check').first().screenshot({path:path.join(out,'桌面_逐版详情.png')});
+  await page.screenshot({path:path.join(out,'桌面_自检总览.png'),fullPage:true});
+  await page.locator('[data-po-copy="0:0"]').click();await page.waitForFunction(()=>document.querySelector('#po-status').textContent.startsWith('已复制'));check('复制的提示词不混入自检报告',await page.evaluate(()=>navigator.clipboard.readText()).then(s=>s.replace(/\r\n/g,'\n')===fixture.versions[0].clips[0].prompt&&!s.includes('逐版自检')));
+  const [all]=await Promise.all([page.waitForEvent('download'),page.locator('#po-export').click()]);await all.saveAs(path.join(out,'六版含自检.md'));
+  const exported=fs.readFileSync(path.join(out,'六版含自检.md'),'utf8');check('全部导出包含逐版报告和六版对比',exported.includes('六版自检总览')&&exported.includes('六版对比检查')&&(exported.match(/\*\*逐版自检/g)||[]).length===6&&(exported.match(/^## /gm)||[]).length===6);
+  const [audit]=await Promise.all([page.waitForEvent('download'),page.locator('#po-export-check').click()]);await audit.saveAs(path.join(out,'独立自检报告.md'));check('自检报告可单独下载',fs.readFileSync(path.join(out,'独立自检报告.md'),'utf8').includes('规则通过 6/6'));
+  await page.reload({waitUntil:'networkidle'});check('刷新后报告仍保留',await page.locator('.po-version-check').count()===6);
+  await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('wb.prompt.optimizer.v1'));delete s.result.self_check;localStorage.setItem('wb.prompt.optimizer.v1',JSON.stringify(s));});await page.reload({waitUntil:'networkidle'});
+  check('旧草稿兼容且不冒充已自检',await page.locator('.po-audit').innerText().then(s=>s.includes('尚无有效自检报告'))&&await page.locator('.po-version').count()===6);
+  await page.locator('[data-po-field="product"]').fill('当前修改过的另一产品');
+  await page.locator('#po-recheck').click();await page.waitForFunction(()=>document.querySelector('#po-status').textContent.startsWith('自检完成'));
+  check('旧结果通过真实后端补齐报告',checks===1&&await page.locator('.po-version-check').count()===6);
+  check('重新自检使用生成快照而非当前新输入',lastCheck.form.product===fixture.input.product&&await page.locator('#po-stale').innerText().then(s=>s.includes('输入已修改')));
+  check('重新自检不重新生成提示词',generations===1&&await page.locator('.po-version pre').first().innerText()===fixture.versions[0].clips[0].prompt);
+  failCheck=true;const previous=await page.evaluate(()=>JSON.stringify(PO.state().result.self_check));await page.locator('#po-recheck').click();await page.waitForFunction(()=>document.querySelector('#po-status').textContent.includes('验收模拟自检不可用'));
+  check('自检失败保留旧报告和六版内容',await page.evaluate(()=>JSON.stringify(PO.state().result.self_check))===previous&&await page.locator('.po-version').count()===6);failCheck=false;
+  await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('wb.prompt.optimizer.v1'));s.result.versions[1]=JSON.parse(JSON.stringify(s.result.versions[0]));delete s.result.self_check;localStorage.setItem('wb.prompt.optimizer.v1',JSON.stringify(s));});await page.reload({waitUntil:'networkidle'});await page.locator('#po-recheck').click();await page.waitForFunction(()=>document.querySelector('#po-status').textContent.startsWith('自检完成'));
+  check('真实后端识别重复版本并标明需修改',await page.locator('.po-audit>.po-section-head .po-check-badge').innerText()==='需修改'&&(await page.locator('.po-version-check[open]').count())>=2);
+  check('报告给出具体修改原因',await page.locator('.po-version-check').first().innerText().then(s=>s.includes('口播文字相似度')&&s.includes('动作文字相似度')));
+  await page.screenshot({path:path.join(out,'桌面_需修改.png'),fullPage:true});
+  await page.locator('.po-audit-comparison summary').click();await page.setViewportSize({width:390,height:900});
+  check('390宽展开自检及对比不撑宽页面',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2&&document.querySelector('#prompt-optimizer').scrollWidth<=document.querySelector('#prompt-optimizer').clientWidth+2));
+  await page.screenshot({path:path.join(out,'手机_自检.png'),fullPage:true});
+  await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('wb.prompt.optimizer.v1'));s.result.self_check.versions[0].items[0].title='<img src=x onerror="window.auditXSS=1">';localStorage.setItem('wb.prompt.optimizer.v1',JSON.stringify(s));});await page.reload({waitUntil:'networkidle'});
+  check('报告内容按纯文本转义',await page.evaluate(()=>!window.auditXSS)&&await page.locator('.po-version-check').first().innerText().then(s=>s.includes('<img')));
+  check('无未捕获脚本异常',errors.length===0);
+  fs.writeFileSync(path.join(out,'selfcheck_browser_results.json'),JSON.stringify({results,errors,generations,checks},null,2));
+  if(results.some(x=>!x.pass))process.exitCode=1;
+ }finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

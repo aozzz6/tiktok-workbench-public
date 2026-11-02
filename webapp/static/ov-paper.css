@@ -1,0 +1,246 @@
+﻿/* ============================================================
+   ov-paper.css · 只作用于「总览看板」这一屏（#view-overview）
+   ------------------------------------------------------------
+   目标：按 S041 纸本索引的样子重排总览，其他视图保持原琥珀主题不动。
+   做法：把纸本令牌**定义在 #view-overview 上**，只影响这一屏的子树；
+        外面的侧边栏、顶栏、其他视图仍用 :root 的琥珀令牌。
+   ============================================================ */
+
+#view-overview {
+  /* 纸本令牌（S041 / P4） */
+  --pri: #8a5a3b;          /* 棕褐：与「一键运行/账号管理」的主色一致 */
+  --pri-d: #6f4529;
+  --amber: #9a6a12;
+  --pri-l: rgba(138, 90, 59, .08);
+  --ink: #241b13;          /* 暖黑：与其它页标题/正文一致 */
+  --sub: #7d6c5c;
+  --muted: #7d6c5c;
+  --line: #e6dccb;
+  --chip: #f4ecdf;
+  --card: #fffaf2;
+  --green: #396b45;
+  --red: #b91c1c;          /* 红只留给失败/异常 */
+  --blue: #1f4f7a;
+  --ov-paper: #f7f1e6;
+  --ov-edge: #ece2d2;
+
+  background: var(--ov-paper);
+  margin: -18px -22px 0;
+  padding: 18px 22px 26px;
+  min-height: calc(100vh - 58px);
+}
+
+/* 这一屏里的卡片/面板：纸白底 + 米棕发丝线 + 5px 硬边 */
+#view-overview .panel,
+#view-overview .kpi,
+#view-overview .tk-item,
+#view-overview .grp-q-panel,
+#view-overview .stg-row,
+#view-overview .run-item {
+  background: var(--card);
+  border-color: var(--line);
+  border-radius: 14px;
+  box-shadow: none;
+}
+#view-overview .tk-item,
+#view-overview .stg-row,
+#view-overview .run-item { border-radius: 12px; }
+#view-overview .kpi { border: 1px solid var(--line); }
+#view-overview .panel { border: 1px solid var(--line); }
+#view-overview .panel-head h2 { letter-spacing: -.01em; }
+#view-overview .btn,
+#view-overview .btn-link,
+#view-overview .pill,
+#view-overview .chip,
+#view-overview .badge,
+#view-overview .tk-count,
+#view-overview .step-chip { border-radius: 8px; }
+#view-overview .pill,
+#view-overview .chip,
+#view-overview .badge { border-radius: 999px; }
+#view-overview code { background: rgba(138, 90, 59, .09); color: var(--pri-d); }
+#view-overview .sec-title { border-left-color: var(--pri); }
+#view-overview .kpi-v { letter-spacing: -.02em; }
+
+/* ── 主从分屏：左 286px 目录 + 右详情 ── */
+#view-overview .ov-md {
+  display: grid;
+  grid-template-columns: 286px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  margin-top: 16px;
+}
+#view-overview .ov-rail {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+#view-overview .ov-rail-h { padding: 14px 14px 12px; border-bottom: 1px solid var(--line); }
+#view-overview .ov-rail-h b { display: block; font-size: 13px; font-weight: 700; letter-spacing: -.01em; }
+#view-overview .ov-rail-h span { display: block; font-size: 11px; color: var(--sub); margin-top: 3px; line-height: 1.5; }
+
+#view-overview .ov-nav { padding: 8px; border-bottom: 1px solid var(--line); display: grid; gap: 2px; }
+#view-overview .ov-nav button {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  font: inherit; font-size: 13px; color: #6b6357;
+  background: transparent; border: 1px solid transparent; border-radius: 8px;
+  padding: 8px 10px; cursor: pointer; transition: background .15s, color .15s, border-color .15s;
+}
+#view-overview .ov-nav button:hover { background: rgba(138, 90, 59, .06); color: var(--ink); }
+#view-overview .ov-nav button.on {
+  background: rgba(138, 90, 59, .10);
+  border-color: rgba(138, 90, 59, .26);
+  color: var(--pri-d);
+  font-weight: 600;
+}
+#view-overview .ov-nav-n { margin-left: auto; font-family: var(--font-data); font-size: 11px; color: var(--sub); }
+#view-overview .ov-nav button.on .ov-nav-n { color: var(--pri-d); }
+
+#view-overview .ov-acc-h {
+  display: flex; align-items: baseline; gap: 8px; padding: 10px 14px 6px;
+  font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--sub);
+}
+#view-overview .ov-acc-h span { margin-left: auto; letter-spacing: 0; text-transform: none; }
+#view-overview .ov-acc-list { overflow: auto; padding: 0 8px 10px; flex: 1; }
+#view-overview .ov-acc { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px dashed var(--line); }
+#view-overview .ov-acc:hover { background: rgba(138, 90, 59, .05); }
+#view-overview .ov-acc-n { font-size: 11.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#view-overview .ov-acc-bar { width: 54px; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; flex: none; }
+#view-overview .ov-acc-bar i { display: block; height: 100%; border-radius: 2px; background: var(--sub); }
+#view-overview .ov-acc-bar i.ok { background: var(--green); }
+#view-overview .ov-acc-bar i.warn { background: var(--amber); }
+#view-overview .ov-acc-bar i.bad { background: var(--red); }
+#view-overview .ov-acc-v { font-family: var(--font-data); font-size: 10.5px; color: var(--sub); width: 30px; text-align: right; flex: none; }
+
+#view-overview .ov-panes { min-width: 0; }
+#view-overview .ov-pane { display: none; }
+#view-overview .ov-pane.on { display: block; }
+#view-overview .ov-pane > * + * { margin-top: 16px; }
+#view-overview .ov-pane-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+#view-overview .ov-pane-h h2 { font-size: 15px; font-weight: 700; letter-spacing: -.01em; }
+#view-overview .ov-pane-h span { font-size: 11.5px; color: var(--sub); }
+
+/* KPI 在窄右栏排 3 列 */
+#view-overview .ov-panes .kpi-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+/* ── 新增两块：趋势折线 + 账号健康环 ── */
+#view-overview .ov-row2 { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 16px; align-items: stretch; }
+#view-overview .ov-card {
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px 12px; min-width: 0;
+}
+#view-overview .ov-card-h { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+#view-overview .ov-card-h h2 { font-size: 12.5px; font-weight: 700; }
+#view-overview .ov-card-h span { margin-left: auto; font-size: 10.5px; color: var(--sub); }
+#view-overview .ov-trend svg { display: block; width: 100%; height: 168px; }
+#view-overview .ov-trend .gl { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 4; }
+#view-overview .ov-trend .ln { fill: none; stroke: var(--pri); stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+#view-overview .ov-trend .ax { fill: var(--sub); font-size: 9px; }
+#view-overview .ov-trend .pt { fill: var(--card); stroke: var(--pri); stroke-width: 1.2; }
+#view-overview .ov-trend-foot { display: flex; gap: 14px; align-items: center; margin-top: 6px; font-size: 10.5px; color: var(--sub); }
+#view-overview .ov-trend-foot i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: 0; background: var(--sub); }
+#view-overview .ov-trend-foot i.ok { background: var(--green); }
+#view-overview .ov-trend-foot i.bad { background: var(--red); }
+
+#view-overview .ov-ring-wrap { display: flex; align-items: center; gap: 14px; }
+#view-overview .ov-ring { flex: none; }
+#view-overview .ov-ring .rk { fill: none; stroke: var(--line); stroke-width: 10; }
+#view-overview .ov-ring .rv { fill: none; stroke: var(--pri); stroke-width: 10; stroke-linecap: round; }
+#view-overview .ov-ring .rk-v { fill: var(--ink); font-size: 22px; font-weight: 700; font-family: var(--font-data); }
+#view-overview .ov-ring .rk-l { fill: var(--sub); font-size: 8.5px; }
+#view-overview .ov-legend { display: grid; gap: 6px; font-size: 11.5px; min-width: 0; }
+#view-overview .ov-legend div { display: flex; align-items: center; gap: 7px; }
+#view-overview .ov-legend b { margin-left: auto; font-family: var(--font-data); }
+#view-overview .ov-legend .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+#view-overview .ov-legend .dot.ok { background: var(--green); }
+#view-overview .ov-legend .dot.warn { background: var(--amber); }
+#view-overview .ov-legend .dot.bad { background: var(--red); }
+#view-overview .ov-ring-note { font-size: 10.5px; color: var(--sub); margin-top: 8px; }
+
+/* ── 待译 / 诊断两个补充面板 ── */
+#view-overview .ov-empty { padding: 20px; text-align: center; color: var(--sub); font-size: 12px; }
+#view-overview .ov-kv { display: grid; grid-template-columns: 128px 1fr; gap: 8px 14px; font-size: 12.5px; }
+#view-overview .ov-kv span { color: var(--sub); }
+#view-overview .ov-checks { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+#view-overview .ov-check { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+#view-overview .ov-check .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+#view-overview .ov-check .dot.ok { background: var(--green); }
+#view-overview .ov-check .dot.bad { background: var(--red); }
+#view-overview .ov-check .muted { margin-left: auto; }
+
+@media (max-width: 1180px) {
+  #view-overview { margin: -12px -12px 0; padding: 12px; }
+  #view-overview .ov-md { grid-template-columns: 1fr; }
+  #view-overview .ov-rail { position: static; max-height: none; }
+  #view-overview .ov-acc-list { max-height: 220px; }
+  #view-overview .ov-panes .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #view-overview .ov-row2 { grid-template-columns: 1fr; }
+}
+
+/* ── 待接管：长日志默认收起 2 行，点「展开日志」看完整链路 ── */
+#view-overview .tk-reason.is-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  position: relative;
+}
+#view-overview .tk-reason.is-clamp::after {
+  content: " …";
+  color: var(--sub);
+}
+#view-overview .tk-more {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--pri-d);
+  background: rgba(138, 90, 59, .07);
+  border: 1px solid rgba(138, 90, 59, .25);
+  border-radius: 8px;
+  padding: 3px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s;
+}
+#view-overview .tk-more:hover { background: rgba(138, 90, 59, .13); }
+#view-overview .tk-item .tk-main { align-items: flex-start; }
+#view-overview .tk-item { align-items: flex-start; }
+
+/* ── 动效层（轻量）：悬停微动 / 面板淡入 / 进度条增长 / 描线 / 圆环展开 ── */
+@keyframes ovPaneIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: no-preference) {
+  #view-overview .ov-acc { transition: background .16s ease, transform .16s ease; }
+  #view-overview .ov-acc:hover { background: rgba(138, 90, 59, .055); transform: translateX(2px); }
+
+  #view-overview #tk-list .tk-item { transition: background .16s ease, border-color .16s ease; }
+  #view-overview #tk-list .tk-item:hover { background: rgba(138, 90, 59, .035); border-color: rgba(138, 90, 59, .28); }
+
+  #view-overview .ov-card,
+  #view-overview .kpi { transition: transform .18s var(--ease-out), box-shadow .18s var(--ease-out), border-color .18s ease; }
+  #view-overview .ov-card:hover,
+  #view-overview .kpi:hover { transform: translateY(-1px); box-shadow: 0 6px 16px -12px rgba(28, 26, 23, .45); }
+
+  #view-overview .ov-pane.on { animation: ovPaneIn .17s var(--ease-out) both; }
+
+  #view-overview .ov-acc-bar i { transition: width .55s var(--ease-out); }
+  #view-overview .ov-trend .ln { transition: stroke-dashoffset .58s var(--ease-out); }
+  #view-overview .ov-trend .ar { transition: opacity .5s ease .1s; }
+  #view-overview .ov-ring .rv { transition: stroke-dasharray .6s var(--ease-out); }
+  #view-overview .grp-tab,
+  #view-overview .nav-item { transition: background .16s ease, color .16s ease, border-color .16s ease; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #view-overview .ov-pane.on { animation: none; }
+  #view-overview .ov-acc,
+  #view-overview .ov-card,
+  #view-overview .kpi { transition: none; }
+}
+
+#view-overview .page-head h1, #view-overview h1 { color: #241b13; letter-spacing: -.01em; }

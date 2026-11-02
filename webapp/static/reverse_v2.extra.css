@@ -1,0 +1,98 @@
+/* reverse_v2.extra.css · 新版「提示词反推」补充件
+   只放设计库里没有、但真实任务需要的件：进度与步骤、更多菜单、交接包、抽屉修正。
+   全部挂在 #rv2 下，不碰其它视图。 */
+
+#rv2 { position: relative; min-height: 520px; }
+
+/* ── 任务卡：真实进度 ───────────────────────────────── */
+#rv2 .rqv-task { position: relative; }
+#rv2 .rqv-task.is-focus::before {
+  content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 2px;
+  background: var(--accent); border-radius: 2px;
+}
+#rv2 .rqv-prog { margin-top: 7px; display: flex; flex-direction: column; gap: 5px; }
+#rv2 .rqv-prog-t { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; color: var(--muted); }
+#rv2 .rqv-prog-t b { color: var(--ink); font-weight: 640; font-size: 11.5px; }
+#rv2 .rqv-bar { height: 5px; border-radius: 99px; background: var(--line); overflow: hidden; }
+#rv2 .rqv-bar i { display: block; height: 100%; border-radius: 99px; background: var(--accent); transition: width .5s var(--ease); }
+#rv2 .rqv-bar i.live { animation: rv2pulse 1.6s ease-in-out infinite; }
+#rv2 .rqv-steps { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+#rv2 .rqv-steps li { font-size: 9.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 1px 6px; white-space: nowrap; }
+#rv2 .rqv-steps li.done { color: var(--ok); border-color: color-mix(in oklab, var(--ok) 38%, transparent); }
+#rv2 .rqv-steps li.cur { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); font-weight: 650; }
+
+/* ── 更多菜单 ──────────────────────────────────────── */
+#rv2 .rqv-menu {
+  position: absolute; right: 10px; bottom: 46px; z-index: 7; min-width: 132px; padding: 4px;
+  background: var(--surface); border: 1px solid var(--line2); border-radius: calc(var(--r) - 4px);
+  box-shadow: var(--shadow-2);
+}
+#rv2 .rqv-menu button {
+  display: block; width: 100%; text-align: left; font: inherit; font-size: 11.5px; color: var(--ink2);
+  background: none; border: 0; border-radius: 6px; padding: 6px 9px; cursor: pointer; white-space: nowrap;
+}
+#rv2 .rqv-menu button:hover { background: color-mix(in oklab, var(--accent) 12%, transparent); color: var(--ink); }
+#rv2 .rqv-menu button.danger { color: var(--bad); }
+#rv2 .rqv-menu button.danger:hover { background: color-mix(in oklab, var(--bad) 12%, transparent); }
+
+/* ── 抽屉里的预格式块 ──────────────────────────────── */
+#rv2 .rqv-pre {
+  white-space: pre-wrap; word-break: break-word; margin: 8px 0 0;
+  font: 11.5px/1.55 var(--f-mono); color: var(--ink2);
+  background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+  max-height: 56vh; overflow: auto;
+}
+#rv2 .rqv-pr { padding: 10px 0; border-bottom: 1px dashed var(--line); }
+#rv2 .rqv-pr:last-child { border-bottom: 0; }
+#rv2 .rqv-pr b { font-size: 11px; color: var(--accent); letter-spacing: .04em; }
+#rv2 .rqv-pr p { font-size: 11.5px; line-height: 1.6; margin: 4px 0 0; color: var(--ink2); }
+
+@keyframes rv2pulse { 0% { opacity: .5; } 50% { opacity: 1; } 100% { opacity: .5; } }
+
+/* 新建/复用后定位到的那张卡：一次高亮，让「已建好」看得见（2026-10-30 反馈修复） */
+@keyframes rv2flash {
+  0%   { box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 55%, transparent); }
+  100% { box-shadow: 0 0 0 3px transparent; }
+}
+#rv2 .rqv-task.is-flash { animation: rv2flash 1.8s var(--ease) 1; }
+@media (prefers-reduced-motion: reduce) {
+  #rv2 .rqv-task.is-flash { animation: none !important; outline: 2px solid var(--accent); outline-offset: 2px; }
+}
+
+/* 视图容器在 .main（max-width 1400 + 32px 内边距）里，把设计稿的安全边距收回来一点 */
+#rv2 .pg { padding-top: 4px; padding-left: 0; padding-right: 0; }
+
+#rv2 .rqv-task.menu-open { z-index: 9; }
+
+/* ── 鼠标跟随光斑（卡片 / 面板 / KPI） ─────────────── */
+#rv2 .rqv-task::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  opacity: 0; transition: opacity var(--mid) var(--ease);
+  background: radial-gradient(240px 150px at var(--mx, 50%) var(--my, 0%),
+    color-mix(in oklab, var(--accent) 15%, transparent), transparent 70%);
+}
+#rv2 .rqv-task:hover::after { opacity: 1; }
+#rv2 .mod::after, #rv2 .k::after, #rv2 .u-compose::after {
+  background: radial-gradient(260px 160px at var(--mx, 50%) var(--my, 0%),
+    color-mix(in oklab, var(--accent) 12%, transparent), transparent 70%);
+}
+#rv2 .mod, #rv2 .u-compose { position: relative; }
+#rv2 .mod::after, #rv2 .u-compose::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  opacity: 0; transition: opacity var(--mid) var(--ease);
+}
+#rv2 .mod:hover::after, #rv2 .u-compose:hover::after { opacity: 1; }
+
+/* ── 入场：只做一次，轮询不重播 ───────────────────── */
+@keyframes rqvUp { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
+#rv2 .rqv-in { animation: rqvUp .52s var(--ease) both; animation-delay: var(--rv-d, 0ms); }
+#rv2 .rqv-in-d { animation: rqvUp .4s var(--ease) both; }
+@media (prefers-reduced-motion: reduce) {
+  #rv2 .rqv-in, #rv2 .rqv-in-d { animation: none !important; }
+  /* 低动效：光斑不出现（不是「静态常亮」），只留边框/位移的静态样式 */
+  #rv2 .rqv-task::after, #rv2 .mod::after, #rv2 .k::after, #rv2 .u-compose::after {
+    opacity: 0 !important; transition: none;
+  }
+}
+/* 任务卡 hover 再明显一点（设计稿同款 -2px 上浮） */
+#rv2 .rqv-task:hover { box-shadow: var(--shadow-1); }

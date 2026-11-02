@@ -1,0 +1,106 @@
+### app.py（相对 .bak2_pending_20261024-1648）
+--- app.py.bak2_pending_20261024-1648	2026-10-24 16:47:54.829569900 +0800
++++ app.py	2026-10-24 16:48:35.088007000 +0800
+@@ -705,12 +705,25 @@
+ 
+ PENDING_TRANS_FILE = Path(__file__).resolve().parent / "data" / "pending_translation.json"
+ 
++# ★ 2026-10-24：队列的读写必须串行。_refresh 会写/删同一个 json，而
++#   POST /api/translation/backfill（手动点按钮）与 _pending_snapshot()（5s 轮询）
++#   可能同时进来 → write_text 非原子，并发下会读到半截 JSON。
++#   用 RLock（不是 Lock）：_pending_snapshot 已持锁后还要再调 _refresh → 普通 Lock 自锁死。
++_PENDING_LOCK = threading.RLock()
++_PENDING_SIG = {"mtime": -1.0}
++
+ # 手动一键运行勾选「翻译回填」的 pipeline run 集合（run.id → True）：
+ # 台账同步完成后若命中，立即衔接一次翻译刷新（不等 15 分钟巡检下一拍）。
+ _TRANS_BACKFILL_RUNS: dict[str, bool] = {}
+ 
+ 
+ def _refresh_pending_translation() -> int:
++    """串行化的队列重建入口（真正的扫描在 _scan_pending_translation）。"""
++    with _PENDING_LOCK:
++        return _scan_pending_translation()
++
++
++def _scan_pending_translation() -> int:
+     """直扫台账真值：「音频(M) 有值而 翻译(N) 为空」的行 = 待译。
+ 
+     非空则写入 data/pending_translation.json 供 15 分钟巡检 automation 消费；
+@@ -718,6 +731,7 @@
+ 
+     ★ 列定位按表头名（兼容「音频/备注」与「翻译/备注中文翻译」），不硬编码索引：
+       14 列规范 M 音频=第 13 列(0-based 12)、N 翻译=第 14 列(0-based 13)。
++    ★ 别直接调本函数：外层 _refresh_pending_translation() 负责加锁。
+     """
+     import json as _json
+     import openpyxl as _openpyxl
+@@ -764,9 +778,16 @@
+ 
+ 
+ def _read_pending_translation() -> dict:
++    """串行化的队列读取入口（文件写是非原子的，读也要排队，避免读到半截 JSON）。"""
++    with _PENDING_LOCK:
++        return _read_pending_unlocked()
++
++
++def _read_pending_unlocked() -> dict:
+     """待译队列摘要。除 total/ts 外补 by_account（总览「待翻译」卡下钻用）。
+ 
+     ★ 2026-10-24：只加字段不改语义 —— 原有消费者只读 total，保持兼容。
++    ★ 别直接调本函数：外层 _read_pending_translation() 负责加锁。
+     """
+     try:
+         import json as _json
+@@ -803,8 +824,7 @@
+ #   台账已全部译完仍会显示「待翻译 9 条」（实测陈旧 66 分钟）。
+ #   这里以台账 mtime 作失效信号：任何写入方都会在下一次 overview 自动纠正，
+ #   只在 mtime 变化后付一次全表扫描成本（实测 720ms，外层另有 5s overview 缓存）。
+-_PENDING_LOCK = threading.Lock()
+-_PENDING_SIG = {"mtime": -1.0}
++#   （_PENDING_LOCK / _PENDING_SIG 定义在 PENDING_TRANS_FILE 之后）
+ 
+ 
+ def _pending_snapshot() -> dict:
+
+### static/app.js
+--- static/app.js.bak2_pending_20261024-1648	2026-10-24 16:47:55.225971700 +0800
++++ static/app.js	2026-10-24 16:48:01.450120900 +0800
+@@ -2161,7 +2161,7 @@
+ let runConfirmGid = null;     // 「跑本组」确认态
+ let runConfirmEl = null;
+ 
+-/* 组健康度：异常（severity=error）/ 待译（音频>转写）/ 运行中 —— 全部取自 lastOv，无新请求 */
++/* 组健康度：异常（severity=error）/ 待转写（音频>转写，≠ 翻译）/ 运行中 —— 全部取自 lastOv，无新请求 */
+ function laneHealth(mems) {
+   const accs = (lastOv && lastOv.accounts) || [];
+   let err = 0, pend = 0, running = 0;
+@@ -2341,7 +2341,9 @@
+   const h = laneHealthOf(g);
+   const badges = [];
+   if (h.err) badges.push(`<span class="lane-bd err" title="组内有抓取/转写异常">异常 ${h.err}</span>`);
+-  if (h.pend) badges.push(`<span class="lane-bd amber" title="音频已下、转写未完成">待译 ${h.pend}</span>`);
++  // ★ 2026-10-24：这里判的是「音频已下、转写(ASR)未完成」，与台账 N 列翻译无关。
++  //   旧文案也叫「待译」，与总览「待翻译 N 条」撞名 → 用户会去点翻译回填白等一整轮。
++  if (h.pend) badges.push(`<span class="lane-bd amber" title="音频已下、转写未完成（与 N 列翻译无关）">待转写 ${h.pend}</span>`);
+   if (h.running) badges.push(`<span class="lane-bd blue" title="正在跑流水线">运行中 ${h.running}</span>`);
+   const ops = g.builtin
+     ? `<span class="lane-ops muted" title="内置分组">内置</span>`
+
+### tests/lane_board.test.js
+--- tests/lane_board.test.js.bak_pending_20261024-1648	2026-10-24 16:47:55.564952500 +0800
++++ tests/lane_board.test.js	2026-10-24 16:48:06.671911300 +0800
+@@ -61,10 +61,11 @@
+     assert(ids[ids.length - 1] === 'default', '默认组应最后');
+   });
+ 
+-  check('组头健康微标：异常 1 / 待译 1 / 运行中 1', () => {
++  check('组头健康微标：异常 1 / 待转写 1 / 运行中 1（转写缺口不叫「待译」）', () => {
+     const head = d.querySelector('.lane[data-gid="g1"] .lane-head');
+     assert(/异常 1/.test(head.textContent), '缺异常微标: ' + head.textContent);
+-    assert(/待译 1/.test(head.textContent), '缺待译微标');
++    assert(/待转写 1/.test(head.textContent), '缺待转写微标');
++    assert(!/待译/.test(head.textContent), '「待译」应专指 N 列翻译，不能用于转写缺口');
+     assert(/运行中 1/.test(head.textContent), '缺运行中微标');
+   });
+ 

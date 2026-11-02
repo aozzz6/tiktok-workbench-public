@@ -1,0 +1,224 @@
+#prompt-optimizer{--po-border:#dfe4ec;--po-ink:#23314b;color:var(--po-ink);max-width:1520px;margin:auto}
+#prompt-optimizer *{box-sizing:border-box}
+#prompt-optimizer fieldset{border:0;padding:0;margin:0;min-width:0}
+#prompt-optimizer .po-panel{background:#fff;border:1px solid var(--po-border);border-radius:14px;padding:22px;margin:16px 0;min-width:0}
+#prompt-optimizer h2{font-size:18px;margin:0 0 16px}#prompt-optimizer h3{font-size:18px;margin:10px 0}#prompt-optimizer h4{margin:10px 0;font-size:14px}
+#prompt-optimizer p{line-height:1.7;margin:8px 0}#prompt-optimizer .po-muted{font-size:13px;color:#66748b;line-height:1.7}
+#prompt-optimizer .po-banner{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:20px 24px;background:#eff4fc;border:1px solid #d7e2f6;border-radius:14px}
+#prompt-optimizer .po-eyebrow{font-size:20px;font-weight:700;color:#243d69}
+#prompt-optimizer .po-toolbar,#prompt-optimizer .po-actions,#prompt-optimizer .po-section-head,#prompt-optimizer .po-result-head{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+#prompt-optimizer .po-toolbar{justify-content:flex-end;margin-top:16px}#prompt-optimizer .po-toolbar span{margin-right:auto}
+#prompt-optimizer .po-section-head,#prompt-optimizer .po-result-head{justify-content:space-between}
+#prompt-optimizer .po-input-grid{display:grid;grid-template-columns:1.15fr 1fr;gap:18px}
+#prompt-optimizer .po-settings-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+#prompt-optimizer .po-analysis-grid,#prompt-optimizer .po-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+#prompt-optimizer label{display:block;font-weight:600;font-size:13px;margin-bottom:12px}
+#prompt-optimizer input:not([type=file]),#prompt-optimizer textarea,#prompt-optimizer select{display:block;width:100%;min-width:0;max-width:100%;border:1px solid #cdd5e2;border-radius:8px;padding:10px 12px;margin-top:7px;background:#fff;color:#23314b;font-size:14px;line-height:1.6}
+#prompt-optimizer textarea{resize:vertical;min-height:92px;white-space:pre-wrap}#prompt-optimizer #po-source{min-height:350px}
+#prompt-optimizer input:not([type=file]),#prompt-optimizer select{height:auto;min-height:44px}
+#prompt-optimizer :focus-visible{outline:2px solid #396ad7;outline-offset:2px}
+#prompt-optimizer .po-file{margin:0;cursor:pointer}#prompt-optimizer .po-file input[hidden]{display:none}
+#prompt-optimizer .po-version{padding:20px;border:1px solid var(--po-border);border-radius:14px;background:#fff;min-width:0}
+#prompt-optimizer .po-badge{display:inline-block;padding:4px 10px;border-radius:6px;color:#365b9f;background:#edf3ff;font-size:12px;font-weight:700}
+#prompt-optimizer .po-axes{display:grid;gap:6px;font-size:13px;line-height:1.6;margin:12px 0;color:#59677c}
+#prompt-optimizer details{margin-top:12px}#prompt-optimizer summary{cursor:pointer;line-height:1.6;font-weight:600}
+#prompt-optimizer pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.8 system-ui,sans-serif;padding:14px;background:#f5f7fb;border-radius:8px;max-height:560px;overflow:auto}
+#prompt-optimizer #po-status{padding:12px 0;font-weight:600;white-space:pre-wrap}#prompt-optimizer .error,#prompt-optimizer .po-warning{color:#a84a1b}
+#prompt-optimizer .po-warning:empty,#prompt-optimizer [hidden]{display:none!important}
+#prompt-optimizer button:disabled{opacity:.5;cursor:wait}#prompt-optimizer ul{padding-left:20px;font-size:14px;line-height:1.7}
+#prompt-optimizer .po-version,#prompt-optimizer li{overflow-wrap:anywhere}#prompt-optimizer #po-history button{margin:10px 10px 0 0}
+#prompt-optimizer #po-image-drop{display:flex;flex-direction:column;align-items:center;gap:8px;width:100%;min-height:132px;padding:20px 12px;border:2px dashed #bac9e4;border-radius:12px;background:#f7faff;color:#365b9f;cursor:pointer;font:inherit;text-align:center;transition:background .15s,border-color .15s}
+#prompt-optimizer #po-image-drop span{font-size:13px}#prompt-optimizer #po-image-drop small{font-size:12px;color:#66748b;line-height:1.6}
+#prompt-optimizer #po-image-drop:hover,#prompt-optimizer #po-image-drop.is-dragging{border-color:#396ad7;background:#eaf1ff}
+#prompt-optimizer #po-image-previews{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}
+#prompt-optimizer .po-image-tile{min-width:0;display:flex;flex-direction:column;gap:6px;padding:6px;border:1px solid var(--po-border);border-radius:8px;background:#fff}
+#prompt-optimizer .po-image-tile img{width:100%;height:88px;object-fit:contain;background:#f5f7fb;border-radius:4px}
+#prompt-optimizer .po-image-tile span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+#prompt-optimizer #po-image-feedback:empty{display:none}#prompt-optimizer #po-image-feedback.error{color:#a84a1b}
+#prompt-optimizer .po-report-picker{padding:14px;background:#f5f7fb;border-radius:10px;margin-bottom:14px}
+#prompt-optimizer #po-benchmark{margin-top:16px}#prompt-optimizer #po-benchmark:empty{display:none}
+#prompt-optimizer .po-benchmark-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:12px 0;max-height:400px;overflow:auto}
+#prompt-optimizer .po-benchmark-grid figure{margin:0;min-width:0}#prompt-optimizer .po-benchmark-grid img{width:100%;height:120px;object-fit:contain;background:#edf0f4;border-radius:6px}
+#prompt-optimizer .po-benchmark-grid figcaption{font-size:12px;line-height:1.5;overflow-wrap:anywhere;color:#66748b}
+#prompt-optimizer .po-source-preview{display:block;width:100%;max-height:360px;margin:12px 0;background:#17212b;border-radius:8px}
+#prompt-optimizer #po-language-note{margin:6px 0;line-height:1.6;font-size:13px}
+#prompt-optimizer .po-settings-grid small{display:block;margin-top:8px;line-height:1.6}
+#prompt-optimizer #po-duration-plan{padding:12px 14px;background:#f2f6fc;border-radius:8px}
+@media(max-width:600px){#prompt-optimizer #po-image-previews{grid-template-columns:repeat(2,minmax(0,1fr))}}
+#view-prompt>.page-head .head-actions{display:none}#ps-legacy{display:none!important}
+@media(max-width:1050px){#prompt-optimizer .po-input-grid,#prompt-optimizer .po-cards{grid-template-columns:1fr}#prompt-optimizer .po-settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){#prompt-optimizer .po-settings-grid,#prompt-optimizer .po-analysis-grid{grid-template-columns:1fr}#prompt-optimizer .po-banner{display:block;padding:16px}#prompt-optimizer .po-panel,#prompt-optimizer .po-version{padding:16px}#prompt-optimizer .po-eyebrow{font-size:17px}}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   定向整改 · 2026-10-27（视觉一致性 + 首屏效率）
+   只覆盖样式，不改 DOM 结构与任何交互逻辑。
+   回滚：删除本段即可，原文件另存 prompt_optimizer.css.bak_20261027
+   1) 冷灰蓝token → 对齐全站暖纸面体系（--pri 琥珀 / --line / --card / --sub）
+   2) 右列产品卡不再被拉伸成大片留白
+   3) 压缩 banner / 报告选择器 / 源文本框，主 CTA 进入首屏
+   4) 工具栏、设置网格、历史折叠条归位对齐
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── ① 令牌对齐：不再自带一套冷色变量 ── */
+#prompt-optimizer{
+  --po-border:var(--line);
+  --po-ink:var(--ink);
+  --po-focus:rgba(180,83,9,.22);
+}
+
+/* ── ② 卡片：白卡 → 暖纸面卡，边框统一发丝线 ── */
+#prompt-optimizer .po-panel,
+#prompt-optimizer .po-version{border-color:var(--line);background:var(--card)}
+#prompt-optimizer .po-muted,
+#prompt-optimizer .po-axes{color:var(--sub)}
+
+/* ── ③ Banner：蓝底 → 暖琥珀底，高度收紧 ── */
+#prompt-optimizer .po-banner{
+  padding:15px 18px;gap:16px;
+  background:linear-gradient(180deg,#fdfbf7,#faf7f1);
+  border-color:rgba(180,83,9,.22)}
+#prompt-optimizer .po-eyebrow{font-size:16.5px;color:var(--pri-d);letter-spacing:-.2px}
+#prompt-optimizer .po-banner p{font-size:12.5px;line-height:1.62;color:var(--sub);margin-top:4px}
+
+/* ── ④ 输入区：右列贴顶，消除被 grid 拉伸出的空白；源文本框限高 ── */
+#prompt-optimizer .po-input-grid{align-items:start}
+#prompt-optimizer #po-source{height:clamp(176px,23vh,232px);min-height:0}
+#prompt-optimizer label{margin-bottom:10px}
+
+/* ── ⑤ 报告选择器：从大色块改成紧凑条 ── */
+#prompt-optimizer .po-report-picker{padding:10px 12px;margin-bottom:10px;background:#faf9f7;border:1px solid var(--line)}
+#prompt-optimizer .po-report-picker label{margin-bottom:0;font-size:12.5px}
+#prompt-optimizer .po-report-picker .po-actions{margin-top:8px}
+#prompt-optimizer .po-report-picker p{margin:8px 0 0;font-size:11.5px}
+
+/* ── ⑥ 工具栏：漂浮空条 → 与卡片同宽的状态条 ── */
+#prompt-optimizer .po-toolbar{
+  justify-content:space-between;margin:12px 0 0;padding:7px 12px;
+  border:1px solid var(--line);border-radius:10px;background:var(--card)}
+#prompt-optimizer .po-toolbar span{margin-right:auto;font-size:12px}
+#prompt-optimizer .po-toolbar .btn{font-size:12px;padding:4px 10px}
+
+/* ── ⑦ 面板标题：加大字号与字重，拉出层级 ── */
+#prompt-optimizer .po-panel>h2,
+#prompt-optimizer .po-section-head h2{font-size:15px;font-weight:700;letter-spacing:-.15px;margin:0 0 10px}
+#prompt-optimizer .po-section-head{margin-bottom:10px}
+#prompt-optimizer .po-section-head h2{margin:0}
+
+/* ── ⑧ 表单控件：冷蓝边框 / 蓝色焦点环 → 暖色体系 ── */
+#prompt-optimizer input:not([type=file]),
+#prompt-optimizer textarea,
+#prompt-optimizer select{border-color:var(--line);color:var(--ink);background:#fff}
+#prompt-optimizer input:not([type=file]):focus,
+#prompt-optimizer textarea:focus,
+#prompt-optimizer select:focus{outline:2px solid var(--po-focus);outline-offset:0;border-color:var(--pri)}
+#prompt-optimizer :focus-visible{outline:2px solid var(--po-focus);outline-offset:2px}
+
+/* ── ⑨ 徽标 / 代码块：蓝底 → 琥珀底 ── */
+#prompt-optimizer .po-badge{background:var(--pri-l);color:var(--pri-d)}
+#prompt-optimizer pre{background:#fcfbfa;border:1px solid var(--line)}
+
+/* ── ⑩ 设置网格：各格顶部对齐，不再被语言说明撑高错位 ── */
+#prompt-optimizer .po-settings-grid{align-items:start;grid-auto-rows:min-content}
+#prompt-optimizer #po-language-note{font-size:11.5px;line-height:1.55;margin:6px 0 0}
+#prompt-optimizer #po-duration-plan{font-size:12px;line-height:1.6;margin-top:12px}
+
+/* ── ⑪ 主操作行：贴住面板边界，主按钮视觉加重 ── */
+#prompt-optimizer>.po-actions{margin:10px 0 2px}
+#prompt-optimizer>.po-actions .btn.primary{font-size:13.5px;padding:8px 20px;font-weight:600}
+#prompt-optimizer>.po-actions .po-muted{font-size:12px}
+
+/* ── ⑫ 历史折叠条：去掉与外层重复的内边距 ── */
+#prompt-optimizer #po-history{padding:0;margin-top:12px}
+#prompt-optimizer #po-history summary{padding:12px 18px;font-size:13px;list-style:none;cursor:pointer}
+#prompt-optimizer #po-history summary::-webkit-details-marker{display:none}
+#prompt-optimizer #po-history summary::before{content:"▸";color:var(--sub);font-size:10px;margin-right:8px}
+#prompt-optimizer #po-history[open] summary::before{content:"▾"}
+#prompt-optimizer #po-history[open] summary{border-bottom:1px solid var(--line)}
+#prompt-optimizer #po-history button{margin:0 6px 8px 0}
+#prompt-optimizer #po-history[open]{padding-bottom:12px}
+#prompt-optimizer #po-history[open] summary+button{margin-left:18px;margin-top:12px}
+
+/* ── ⑬ 状态行 ── */
+#prompt-optimizer #po-status{font-size:12.5px;padding:8px 0}
+
+/* ── ⑭ 小屏回归 ── */
+@media(max-width:1050px){#prompt-optimizer #po-source{height:200px}}
+@media(max-width:600px){#prompt-optimizer .po-toolbar{flex-wrap:wrap;gap:8px}}
+
+/* ── ⑮ 空分析面板：整块白卡 → 虚线提示条（未分析时不再占一大块白） ── */
+#prompt-optimizer #po-analysis:has(>p.po-muted:only-child){
+  background:transparent;border-style:dashed;padding:13px 18px}
+#prompt-optimizer #po-analysis:has(>p.po-muted:only-child)>p{margin:0;font-size:12.5px}
+
+/* ── ⑯ 生成计划提示块：残留浅蓝 → 暖纸面 ── */
+#prompt-optimizer #po-duration-plan{background:#faf9f7;border:1px solid var(--line);color:var(--sub)}
+#prompt-optimizer #po-duration-plan.po-warning{background:#fdf6ee;border-color:rgba(180,83,9,.28);color:#a84a1b}
+
+/* ── ⑰ 设置网格：6 列细分，数字字段各占半行，消除右下 1/3 空洞 ── */
+#prompt-optimizer .po-settings-grid{grid-template-columns:repeat(6,minmax(0,1fr))}
+#prompt-optimizer .po-settings-grid>*{grid-column:span 2}
+#prompt-optimizer .po-settings-grid>label:has([data-po-field="duration"]),
+#prompt-optimizer .po-settings-grid>label:has([data-po-field="clip_limit"]){grid-column:span 3}
+@media(max-width:1050px){
+  #prompt-optimizer .po-settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #prompt-optimizer .po-settings-grid>*,
+  #prompt-optimizer .po-settings-grid>label:has([data-po-field="duration"]),
+  #prompt-optimizer .po-settings-grid>label:has([data-po-field="clip_limit"]){grid-column:auto}
+}
+@media(max-width:600px){#prompt-optimizer .po-settings-grid{grid-template-columns:minmax(0,1fr)}}
+
+/* ── ⑱ 状态行为空时不占位 ── */
+#prompt-optimizer #po-status:empty{display:none}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   第二阶段 · 2026-10-27（结构微调配套）
+   右列拆成「换产品」+「产品图」两张卡，消除右下方大片留白
+   回滚：JS 另存 prompt_optimizer.js.bak_20261027
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ⑲ 右列成为独立的纵向卡片流（拉伸到与左列等高，卡内不留页面白） */
+#prompt-optimizer .po-col-r{display:flex;flex-direction:column;gap:16px;min-width:0;align-self:stretch}
+#prompt-optimizer .po-col-r>.po-panel{margin:0}
+#prompt-optimizer .po-input-grid>.po-panel{margin:0}
+
+/* ⑳ 产品图卡：与左列卡片同款，标题带可选标注 */
+#prompt-optimizer .po-imgpanel{flex:1 1 auto;display:flex;flex-direction:column;padding:18px 20px}
+#prompt-optimizer .po-imgpanel .po-section-head{margin-bottom:8px;align-items:baseline}
+#prompt-optimizer .po-imgpanel .po-section-head h2{font-size:14px}
+#prompt-optimizer .po-imgpanel .po-section-head span{font-size:11px;color:var(--sub)}
+#prompt-optimizer .po-imgdetails{border-top:1px solid var(--line);padding-top:8px}
+#prompt-optimizer .po-imgdetails summary{font-size:12px;font-weight:600;color:var(--sub);cursor:pointer;list-style:none}
+#prompt-optimizer .po-imgdetails summary::-webkit-details-marker{display:none}
+#prompt-optimizer .po-imgdetails summary::before{content:"▸";font-size:10px;margin-right:7px;color:var(--muted)}
+#prompt-optimizer .po-imgdetails[open] summary::before{content:"▾"}
+#prompt-optimizer .po-imgdetails[open] summary{margin-bottom:10px}
+#prompt-optimizer .po-imgdetails p{margin:0 0 8px;font-size:11.5px}
+#prompt-optimizer .po-imgpanel #po-image-drop{min-height:104px;padding:14px 10px}
+#prompt-optimizer .po-imgfoot{margin:auto 0 0;padding-top:10px;font-size:11px;line-height:1.6;color:var(--muted);border-top:1px dashed var(--line)}
+
+/* ㉑ 中屏：单列时避免最后一项落单，数字字段占满整行 */
+@media(max-width:1050px){
+  #prompt-optimizer .po-input-grid{grid-template-columns:minmax(0,1fr)}
+  #prompt-optimizer .po-col-r{gap:14px}
+}
+@media(min-width:601px) and (max-width:1050px){
+  #prompt-optimizer .po-settings-grid>label:has([data-po-field="clip_limit"]){grid-column:1/-1}
+}
+
+/* 六版提示词自检：状态和报告与可复制提示词分开呈现。 */
+#prompt-optimizer .po-audit{margin:12px 0 18px}
+#prompt-optimizer .po-check-badge{display:inline-block;font-size:12px;line-height:1.6;padding:2px 8px;border-radius:6px;white-space:nowrap;font-weight:600;vertical-align:middle}
+#prompt-optimizer .po-check-pass{background:#ecf8ef;color:#24653b}
+#prompt-optimizer .po-check-needs_revision{background:#fff0ed;color:#9f3325}
+#prompt-optimizer .po-check-manual{background:#fff6de;color:#835610}
+#prompt-optimizer .po-version-check{padding:10px 0;border-top:1px solid var(--po-border);border-bottom:1px solid var(--po-border);margin:12px 0}
+#prompt-optimizer .po-version-check summary{font-size:13px}
+#prompt-optimizer .po-version-check ul{list-style:none;padding:0;margin:10px 0}
+#prompt-optimizer .po-version-check li{padding:8px 0;border-bottom:1px dashed var(--po-border)}
+#prompt-optimizer .po-version-check li:last-child{border:0}
+#prompt-optimizer .po-version-check li p{font-weight:400;margin:5px 0 0;font-size:12px;color:var(--sub)}
+#prompt-optimizer .po-check-table-wrap{max-width:100%;overflow:auto;min-width:0}
+#prompt-optimizer .po-check-table{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+#prompt-optimizer .po-check-table th,#prompt-optimizer .po-check-table td{padding:10px 8px;border:1px solid var(--po-border);text-align:left;vertical-align:top;overflow-wrap:anywhere;white-space:normal}
+#prompt-optimizer .po-check-table th{background:#faf9f7}
+@media(max-width:600px){#prompt-optimizer .po-check-table{table-layout:auto;min-width:580px}#prompt-optimizer .po-result-head>.po-actions{gap:8px}#prompt-optimizer .po-audit{padding:14px}}

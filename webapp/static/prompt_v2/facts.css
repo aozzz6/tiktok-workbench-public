@@ -1,0 +1,322 @@
+/* ============================================================
+   facts.css · ② 事实条 + 生成前检查（2026-10-30）
+   作用域：.pv2 下，不碰别的视图。宽度按线上那一栏 392px 设计。
+   ============================================================ */
+
+/* ── C1 三行摘要：默认折叠 ─────────────────────────── */
+.pv2 .u-sum {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 0; border-bottom: 1px dashed var(--line2);
+  font-size: var(--fs-s); line-height: 1.4;
+}
+.pv2 .u-sum:last-of-type { border-bottom: 0; }
+.pv2 .u-sum-k { flex: 0 0 auto; color: var(--muted); font-size: var(--fs-xs); }
+.pv2 .u-sum-v {
+  flex: 1 1 auto; min-width: 0; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pv2 .u-sum-v.muted { color: var(--muted); }
+.pv2 .u-sum.bad .u-sum-v { color: var(--bad); }
+.pv2 .u-sum.warn .u-sum-v { color: var(--warn); }
+.pv2 .u-sum-btn {
+  flex: 0 0 auto; font: inherit; font-size: var(--fs-2xs); cursor: pointer;
+  color: var(--accent); background: none; border-radius: 99px; padding: 1px 8px;
+  border: 1px solid color-mix(in oklab, var(--accent) 35%, transparent);
+}
+.pv2 .u-sum-btn:hover { background: color-mix(in oklab, var(--accent) 10%, transparent); }
+
+/* ── 产品图缩略图（2026-10-30 简化：图片上得去，也看得见是哪张） ── */
+.pv2 .u-sum-photo { flex-wrap: wrap; row-gap: 6px; }
+.pv2 .u-phs { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.pv2 .u-ph { position: relative; display: inline-block; width: 26px; height: 32px; }
+.pv2 .u-ph-im {
+  display: block; width: 26px; height: 32px; padding: 0; cursor: zoom-in;
+  border: 1px solid var(--line2); border-radius: 4px; overflow: hidden; background: var(--surface2);
+}
+.pv2 .u-ph-im img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.pv2 .u-ph-x {
+  position: absolute; top: -6px; right: -6px; display: grid; place-items: center;
+  width: 15px; height: 15px; padding: 0; font: inherit; font-size: 10px; line-height: 1;
+  color: var(--muted); background: var(--surface); border: 1px solid var(--line2);
+  border-radius: 50%; cursor: pointer;
+}
+.pv2 .u-ph-x:hover { color: var(--bad); border-color: color-mix(in oklab, var(--bad) 45%, transparent); }
+.pv2 .u-ph-big { display: block; width: 100%; height: auto; border-radius: var(--r-s); border: 1px solid var(--line); }
+
+/* 检查条没内容时整块不占位 */
+.pv2 .u-chk-wrap[hidden] { display: none; }
+
+/* ── 检查条（默认一条，展开才是明细） ───────────────── */
+.pv2 .u-ckbox { display: block; }
+.pv2 .u-ckbar {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: var(--r);
+  padding: 7px 9px; font-size: var(--fs-xs); background: var(--surface);
+}
+.pv2 .u-ckbar.is-bad {
+  border-color: color-mix(in oklab, var(--bad) 40%, transparent);
+  background: color-mix(in oklab, var(--bad) 6%, var(--surface));
+}
+.pv2 .u-ckbar.is-warn {
+  border-color: color-mix(in oklab, var(--warn) 45%, transparent);
+  background: color-mix(in oklab, var(--warn) 6%, var(--surface));
+}
+.pv2 .u-ckbar.is-ok {
+  border-color: color-mix(in oklab, var(--ok) 40%, transparent);
+  background: color-mix(in oklab, var(--ok) 6%, var(--surface));
+}
+.pv2 .u-ckbar-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+.pv2 .u-ckbar.is-bad .u-ckbar-dot { background: var(--bad); }
+.pv2 .u-ckbar.is-warn .u-ckbar-dot { background: var(--warn); }
+.pv2 .u-ckbar.is-ok .u-ckbar-dot { background: var(--ok); }
+.pv2 .u-ckbar-h { font-size: var(--fs-xs); font-weight: 640; color: var(--ink); white-space: nowrap; }
+.pv2 .u-ckbar-v {
+  flex: 1 1 80px; min-width: 0; color: var(--ink2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pv2 .u-ckbar-act {
+  flex: 0 0 auto; font: inherit; font-size: var(--fs-2xs); cursor: pointer;
+  color: var(--accent-ink); background: var(--accent); border: 0;
+  border-radius: 99px; padding: 1px 8px;
+}
+.pv2 .u-ckbar-more {
+  flex: 0 0 auto; font: inherit; font-size: var(--fs-2xs); cursor: pointer;
+  color: var(--muted); background: none; border: 0; padding: 1px 2px;
+}
+.pv2 .u-ckbar-more:hover { color: var(--ink2); }
+.pv2 .u-ckbox .u-chk2 { margin-top: 7px; }
+
+/* ── 事实条 ─────────────────────────────────────────── */
+.pv2 .u-facts { display: block; }
+.pv2 .u-facts-h {
+  display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
+  margin-bottom: 7px;
+}
+.pv2 .u-facts-h b { font-size: var(--fs-s); color: var(--ink); font-weight: 640; }
+.pv2 .u-facts-meta { font-size: var(--fs-2xs); color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.pv2 .u-facts-list {
+  list-style: none; margin: 0; padding: 0;
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface);
+  max-height: 336px; overflow-y: auto; overscroll-behavior: contain;
+}
+.pv2 .u-fact {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: var(--fs-s); line-height: 1.35;
+}
+.pv2 .u-fact:last-child { border-bottom: 0; }
+.pv2 .u-fact.is-dup { background: color-mix(in oklab, var(--warn) 7%, transparent); }
+.pv2 .u-fact.is-conflict { background: color-mix(in oklab, var(--bad) 7%, transparent); }
+.pv2 .u-fact.is-empty { color: var(--muted); }
+
+.pv2 .u-fact-k {
+  flex: 0 0 auto; font: inherit; font-size: var(--fs-2xs); letter-spacing: .03em;
+  color: var(--muted); background: none; border: 1px solid var(--line2); border-radius: 99px;
+  padding: 1px 7px; cursor: pointer;
+}
+.pv2 .u-fact-k:hover { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 45%, transparent); }
+
+.pv2 .u-fact-v {
+  flex: 1 1 120px; min-width: 0; width: 100%;
+  font: inherit; font-size: var(--fs-s); color: var(--ink);
+  background: none; border: 0; border-bottom: 1px dashed transparent; padding: 1px 0;
+}
+.pv2 .u-fact-v:hover { border-bottom-color: var(--line2); }
+.pv2 .u-fact-v:focus { outline: none; border-bottom-color: var(--accent); }
+
+.pv2 .u-fact-src {
+  flex: 0 0 auto; font-size: var(--fs-2xs); color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  border-radius: 99px; padding: 1px 6px; white-space: nowrap;
+}
+.pv2 .u-fact-st { flex: 0 0 auto; font-size: var(--fs-2xs); color: var(--muted); white-space: nowrap; }
+.pv2 .u-fact-st.ok { color: var(--ok); }
+.pv2 .u-fact-st.warn { color: var(--warn); }
+.pv2 .u-fact-st.bad { color: var(--bad); }
+
+.pv2 .u-fact-x {
+  flex: 0 0 auto; font: inherit; font-size: var(--fs-s); line-height: 1;
+  color: var(--muted); background: none; border: 0; padding: 0 2px; cursor: pointer;
+}
+.pv2 .u-fact-x:hover { color: var(--bad); }
+
+.pv2 .u-fact-pick {
+  flex: 0 0 auto; font: inherit; font-size: var(--fs-2xs); line-height: 1.6;
+  color: var(--accent-ink); background: var(--accent); border: 0; border-radius: 99px;
+  padding: 0 8px; cursor: pointer; white-space: nowrap;
+}
+.pv2 .u-fact-pick:hover { filter: brightness(1.05); }
+.pv2 .u-fact-fix {
+  flex: 1 0 100%; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 5px; font-size: var(--fs-2xs); color: var(--ink2);
+}
+.pv2 .u-fact-tip { flex: 1 0 100%; margin-top: 4px; font-size: var(--fs-2xs); color: var(--warn); }
+.pv2 .u-fact-empty { padding: 12px 10px; font-size: var(--fs-xs); color: var(--muted); text-align: center; }
+
+.pv2 .u-facts-tools { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; align-items: center; }
+
+.pv2 .u-facts-raw { margin-top: 7px; }
+.pv2 .u-facts-raw summary {
+  font-size: var(--fs-2xs); color: var(--muted); cursor: pointer;
+  list-style: none; display: inline-flex; align-items: center; gap: 4px;
+}
+.pv2 .u-facts-raw summary::-webkit-details-marker { display: none; }
+.pv2 .u-facts-raw summary::before { content: "▸"; font-size: 9px; }
+.pv2 .u-facts-raw[open] summary::before { content: "▾"; }
+.pv2 .u-facts-raw summary:hover { color: var(--ink2); }
+.pv2 .u-facts-raw .ta { margin-top: 6px; min-height: 76px; }
+
+/* ── 生成前检查 ─────────────────────────────────────── */
+.pv2 .u-chk-wrap { padding-top: 0; }
+.pv2 .u-chk2 {
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface); overflow: hidden;
+}
+.pv2 .u-chk2.is-bad-flash {
+  animation: pv2ChkFlash 1.6s var(--ease) 1;
+}
+@keyframes pv2ChkFlash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  30% { box-shadow: 0 0 0 3px color-mix(in oklab, var(--bad) 35%, transparent); }
+}
+.pv2 .u-chk2-h {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-bottom: 1px solid var(--line);
+  font-size: var(--fs-s); color: var(--ink); font-weight: 620;
+}
+.pv2 .u-chk2-badge {
+  font-size: var(--fs-2xs); font-weight: 500;
+  color: var(--bad); border: 1px solid color-mix(in oklab, var(--bad) 45%, transparent);
+  border-radius: 99px; padding: 1px 7px;
+}
+.pv2 .u-chk2-badge.ok {
+  color: var(--ok); border-color: color-mix(in oklab, var(--ok) 45%, transparent);
+}
+.pv2 .u-chk2-row {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 7px 10px; border-bottom: 1px solid var(--line); font-size: var(--fs-s);
+}
+.pv2 .u-chk2-row:last-child { border-bottom: 0; }
+.pv2 .u-chk2-ic { flex: 0 0 12px; text-align: center; font-size: var(--fs-s); line-height: 1.5; }
+.pv2 .u-chk2-ic.ok { color: var(--ok); }
+.pv2 .u-chk2-ic.warn { color: var(--warn); }
+.pv2 .u-chk2-ic.bad { color: var(--bad); }
+.pv2 .u-chk2-b { flex: 1 1 auto; min-width: 0; color: var(--ink2); line-height: 1.5; }
+.pv2 .u-chk2-b i {
+  display: block; font-style: normal; font-size: var(--fs-2xs);
+  color: var(--muted); letter-spacing: .03em; margin-bottom: 1px;
+}
+.pv2 .u-chk2-row > .btn { flex: 0 0 auto; align-self: center; }
+
+/* ③ 生成区的阻断提示 */
+.pv2 .u-mode-gate {
+  display: flex; align-items: center; gap: 8px; margin: 6px 0 2px;
+  font-size: var(--fs-2xs); color: var(--bad);
+}
+.pv2 .u-gate-txt { font-variant-numeric: tabular-nums; }
+
+/* ── ③ 生成进度条（2026-10-30） ─────────────────────── */
+.pv2 .u-gbar {
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface); padding: 9px 10px; margin-bottom: 8px;
+}
+.pv2 .u-gbar-t {
+  display: flex; align-items: baseline; justify-content: space-between;
+  font-size: var(--fs-xs); color: var(--ink2); margin-bottom: 6px;
+}
+.pv2 .u-gbar-t b {
+  font-size: var(--fs-s); color: var(--accent);
+  font-variant-numeric: tabular-nums; font-weight: 660;
+}
+.pv2 .u-gbar-track {
+  height: 6px; border-radius: 99px; background: var(--bg2);
+  border: 1px solid var(--line); overflow: hidden;
+}
+.pv2 .u-gbar-track i {
+  display: block; height: 100%; border-radius: 99px;
+  background: linear-gradient(90deg,
+    color-mix(in oklab, var(--accent) 78%, transparent),
+    var(--accent));
+  transition: width .5s linear;
+  position: relative; overflow: hidden;
+}
+/* 条纹流动：表示「还在跑」，而不是卡在某个百分比 */
+.pv2 .u-gbar-track i::after {
+  content: ""; position: absolute; inset: 0;
+  background-image: linear-gradient(115deg,
+    rgba(255,255,255,.28) 0 8px, transparent 8px 16px);
+  background-size: 16px 100%;
+  animation: pv2Stripes 1s linear infinite;
+}
+@keyframes pv2Stripes { from { background-position: 0 0; } to { background-position: 16px 0; } }
+.pv2 .u-gbar-meta {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin-top: 6px; font-size: var(--fs-2xs); color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pv2 .u-gbar-track i::after { animation: none; }
+}
+
+/* ══ ⑦ 历史库（H1 输入快照 + H3 分组/搜索/多选，2026-10-30） ══ */
+.pv2 .u-his-q {
+  height: 26px; width: 150px; font-size: var(--fs-xs);
+  padding: 0 9px; margin-right: 6px;
+}
+.pv2 .u-his-col { display: flex; flex-direction: column; gap: 6px; }
+.pv2 .u-his-day {
+  font-size: var(--fs-2xs); color: var(--muted); letter-spacing: .05em;
+  margin: 6px 0 1px;
+}
+.pv2 .u-his-day:first-child { margin-top: 0; }
+.pv2 .u-his-empty { font-size: var(--fs-xs); color: var(--muted); margin: 6px 0; }
+
+.pv2 .u-his-row {
+  display: flex; align-items: center; gap: 9px;
+  border: 1px solid var(--line); border-radius: var(--r-s);
+  background: var(--surface2); padding: 8px 9px;
+}
+.pv2 .u-his-row.is-sel {
+  border-color: color-mix(in oklab, var(--accent) 45%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 22%, transparent) inset;
+}
+.pv2 .u-his-cb {
+  flex: 0 0 auto; width: 14px; height: 14px; padding: 0; cursor: pointer;
+  border: 1px solid var(--line2); border-radius: 3px; background: var(--surface);
+  color: var(--accent-ink); font: inherit; font-size: 10px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.pv2 .u-his-cb.on { background: var(--accent); border-color: var(--accent); }
+.pv2 .u-his-cb.on::after { content: "✓"; }
+
+.pv2 .u-his-main { flex: 1 1 auto; min-width: 0; }
+.pv2 .u-his-l1 { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
+.pv2 .u-his-title {
+  font: inherit; font-size: var(--fs-s); color: var(--ink); font-weight: 560;
+  background: none; border: 0; padding: 0; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;
+}
+.pv2 .u-his-title:hover { color: var(--accent); text-decoration: underline; }
+.pv2 .u-his-meta {
+  margin-left: auto; flex: 0 0 auto; white-space: nowrap;
+  font-size: var(--fs-2xs); color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.pv2 .u-his-l2 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
+.pv2 .u-his-chip {
+  font-size: var(--fs-2xs); color: var(--ink2); background: var(--surface);
+  border: 1px solid var(--line2); border-radius: 99px; padding: 1px 7px; white-space: nowrap;
+}
+.pv2 .u-his-same { font-size: var(--fs-2xs); color: var(--warn); white-space: nowrap; }
+.pv2 .u-his-same.ok { color: var(--ok); }
+.pv2 .u-his-acts { flex: 0 0 auto; display: flex; gap: 6px; align-items: center; }
+
+.pv2 .u-his-bulk {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line2);
+  font-size: var(--fs-xs); color: var(--ink2);
+}
+@media (max-width: 760px) {
+  .pv2 .u-his-row { flex-wrap: wrap; }
+  .pv2 .u-his-acts { width: 100%; justify-content: flex-end; }
+}

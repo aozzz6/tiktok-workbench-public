@@ -1,0 +1,46 @@
+const {chromium}=require('playwright');
+const fs=require('fs'),path=require('path');
+const out=process.argv[2],results=[],errors=[];
+const check=(name,pass)=>{results.push({name,pass:!!pass});console.log(pass?'PASS':'FAIL',name);};
+(async()=>{
+ const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:1100},acceptDownloads:true});page.on('pageerror',e=>errors.push(e.message));
+  let language='',calls=0,last=null,fail=false,analysisInput=null;
+  const reply=(r,data,status=200)=>r.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
+  await page.route('**/api/prompt-optimizer/profile',r=>reply(r,{platform:'TikTok Symphony / Dreamina Seedance 2.0'}));
+  await page.route('**/api/prompt-optimizer/analyze',r=>{analysisInput=r.request().postDataJSON();return reply(r,{analysis:{summary:'测试分析',replacement:'替换产品',language,duration:15,ratio:'9:16',strengths:[],issues:[],changes:[],missing:[]}});});
+  await page.route('**/api/prompt-optimizer/generate',r=>{calls++;last=r.request().postDataJSON();return reply(r,fail?{detail:'模拟网络错误'}:JSON.parse(fs.readFileSync(path.join(out,'fixture.json'),'utf8')),fail?502:200);});
+  await page.goto('http://127.0.0.1:8789/#prompt');await page.waitForSelector('#po-language-choice');
+  const fill=(k,v)=>page.locator(`[data-po-field="${k}"]`).fill(v);
+  const choice=v=>page.selectOption('#po-language-choice',v);
+  const analyze=async()=>{await page.locator('#po-analyze').click();await page.waitForFunction(()=>document.querySelector('#po-status').textContent.startsWith('分析完成'));};
+  await fill('source','对标动作：展示衣服。未提供原口播。');await fill('product','我的上衣');await fill('facts','蓝色，圆领');await fill('duration','15');await page.selectOption('[data-po-field="ratio"]','9:16');
+  await page.locator('#po-generate').click();check('无偏好时要求选择而不猜语言',calls===0&&await page.locator('#po-status').innerText().then(s=>s.includes('请选择口播语言')));
+  await choice('德语');check('选择后立即清除过期语言报错',await page.locator('#po-status').innerText()==='输入已补齐，可以继续。'&&!await page.locator('#po-status').evaluate(e=>e.classList.contains('error')));
+  await analyze();check('分析未知语言仍显示当前手选值',await page.locator('#po-analysis').innerText().then(s=>s.includes('当前输出：德语')&&s.includes('未能确定')));
+  check('分析请求不把用户偏好作为原语言证据',analysisInput.language==='');
+  await page.locator('#po-generate').click();await page.waitForSelector('.po-version');check('15秒无需处理方式即可生成',calls===1&&last.strategy==='compress'&&last.language==='德语');
+  await page.locator('#po-new').click();check('新建沿用手选语言并标明来源',await page.locator('#po-language-choice').inputValue()==='德语'&&await page.locator('#po-language-note').innerText().then(s=>s.includes('上次手选')&&s.includes('未识别')));
+  await page.reload();await page.waitForSelector('#po-language-choice');check('刷新保留语言偏好',await page.locator('#po-language-choice').inputValue()==='德语');
+  const id='7701034631671516439';await page.evaluate(id=>PO.importReport(id),id);
+  check('导入原片不会清空语言偏好',await page.locator('#po-language-choice').inputValue()==='德语'&&await page.locator('#po-language-note').innerText().then(s=>s.includes('上次手选')));
+  check('原片可直接播放核对且不自动播放',await page.locator('.po-source-preview').getAttribute('src')===`/tk_reverse/${id}/src.mp4`&&await page.locator('.po-source-preview').getAttribute('autoplay')===null);
+  check('明确音轨不等于口播识别',await page.locator('#po-benchmark').innerText().then(s=>s.includes('可能是音乐')&&s.includes('没有可核验的口播转写')));
+  await fill('product','我的上衣');await fill('facts','蓝色，圆领');language='法语';await analyze();
+  check('分析建议不覆盖沿用偏好，只给采用入口',await page.locator('#po-language-choice').inputValue()==='德语'&&await page.locator('#po-language-note').innerText().then(s=>s.includes('沿用'))&&await page.locator('#po-use-analysis-language').isVisible());
+  check('自动分析不会覆盖最后手选偏好',await page.evaluate(()=>localStorage.getItem('wb.prompt.optimizer.last-language.v1'))==='德语');
+  await choice('英语');await analyze();check('分析不擅自覆盖本次手选语言',await page.locator('#po-language-choice').inputValue()==='英语'&&await page.locator('#po-use-analysis-language').isVisible());
+  await page.locator('#po-use-analysis-language').click();check('用户可明确采用建议并记住',await page.locator('#po-language-choice').inputValue()==='法语'&&await page.evaluate(()=>localStorage.getItem('wb.prompt.optimizer.last-language.v1'))==='法语');
+  await choice('custom');await fill('language','墨西哥西班牙语');await page.reload();await page.waitForSelector('#po-language-choice');check('自定义语言可刷新恢复',await page.locator('#po-language-choice').inputValue()==='custom'&&await page.locator('[data-po-field="language"]').isVisible()&&await page.locator('[data-po-field="language"]').inputValue()==='墨西哥西班牙语');
+  await fill('duration','30');await page.selectOption('[data-po-field="strategy"]','');const before=calls;await page.locator('#po-generate').click();check('只有超长才要求选择策略',calls===before&&await page.locator('#po-status').innerText().then(s=>s.includes('处理方式')));
+  await page.selectOption('[data-po-field="strategy"]','split');check('拆段预览总数与秒数',await page.locator('#po-duration-plan').innerText().then(s=>s.includes('15 + 15')&&s.includes('12 段')));
+  await fill('clip_limit','4');await fill('duration','5');await page.locator('#po-generate').click();check('无法合理拆段在模型调用前拦截',calls===before&&await page.locator('#po-status').innerText().then(s=>s.includes('至少 4 秒')));
+  await fill('clip_limit','15');await fill('duration','15');check('改单段后自动隐藏多余策略并修正报错',await page.locator('#po-strategy-wrap').isHidden()&&await page.locator('#po-status').innerText()==='输入已补齐，可以继续。');
+  fail=true;await page.locator('#po-generate').click();await page.waitForFunction(()=>document.querySelector('#po-status').textContent.includes('模拟网络错误'));await choice('德语');check('修改字段不会吞掉服务故障提示',await page.locator('#po-status').innerText().then(s=>s.includes('模拟网络错误')));
+  language='';await analyze();await page.locator('#po-settings').scrollIntoViewIfNeeded();await page.screenshot({path:path.join(out,'语言与生成计划.png')});
+  await page.evaluate(()=>{const key='wb.prompt.optimizer.v1',s=JSON.parse(localStorage.getItem(key));delete s.languageOrigin;localStorage.setItem(key,JSON.stringify(s));});await page.reload();await page.waitForSelector('#po-language-choice');check('兼容旧草稿且不伪称识别来源',await page.locator('#po-language-note').innerText().then(s=>s.includes('草稿中的语言'))&&await page.locator('[data-po-field="product"]').inputValue()==='我的上衣');
+  await page.setViewportSize({width:390,height:900});check('手机页面无横向溢出',await page.locator('#prompt-optimizer').evaluate(e=>e.scrollWidth<=e.clientWidth+2));
+  check('无浏览器脚本异常',errors.length===0);
+ }finally{await browser.close();fs.writeFileSync(path.join(out,'language_flow_results.json'),JSON.stringify({results,errors},null,2));if(results.some(r=>!r.pass))process.exitCode=1;}
+})().catch(e=>{console.error(e);process.exitCode=1;});

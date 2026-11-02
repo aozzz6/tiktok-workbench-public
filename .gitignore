@@ -1,0 +1,66 @@
+# 工作台（tiktok）仓库忽略规则
+# 目的：版本库只放代码、模板与文档；运行时数据、媒体、备份、验收材料一律不进。
+
+# ── 环境与依赖 ──
+.venv/
+venv/
+__pycache__/
+*.pyc
+node_modules/
+.env
+.env.*
+# 本地打包的 ffmpeg/ffprobe 二进制（约 200MB，可重新下载）
+pipeline/ffmpeg_bin/
+
+# ── 抓取产物与媒体（体积大，可重新生成） ──
+pipeline/output/
+*_audio/
+*.mp3
+*.wav
+*.m4a
+*.mp4
+output/
+uploads/
+
+# ── 运行数据（每次跑都会变） ──
+pipeline/accounts.json
+pipeline/pipeline_state.json
+pipeline/gate_report.json
+webapp/data/
+runs*.jsonl
+uid_cache.json
+*.db
+*.sqlite*
+*.xlsx
+*.xlsb
+*.zip
+*.7z
+*.rar
+cookie.txt
+cookie*.json
+*cookie*.txt
+logs/
+reports/
+*.log
+*.out
+
+# ── 备份、验收、一次性探测（历史快照与过程材料） ──
+_bak_*/
+_backup_*/
+改前备份_*/
+验收包_*/
+验收材料_*/
+_audit_*/
+_check_*/
+_tmp_*/
+_probes/
+_accept/
+accept/
+_evidence_*/
+_shots_*/
+*.bak*
+*.tmp
+
+# ── 逆向素材：按视频 ID 建的目录 + 上传区（媒体，420MB 级） ──
+reverse/[0-9]*/
+reverse/_uploads/

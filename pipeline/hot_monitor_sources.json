@@ -1,0 +1,37 @@
+{
+  "_comment": "hot_product_monitor.py 数据源注册表（2026-10-05 实测）。type=cc_ssr：抓新版 CC SSR 页面并解析内嵌 React Query 缓存（纯 curl_cffi+cookie）；type=cc_api：老 creative_radar_api（已全部 40101 废弃，仅留档）。FastMoss 充值后可追加新源。",
+  "sources": [
+    {
+      "name": "cc_trends_hashtag_us",
+      "type": "cc_ssr",
+      "url": "https://ads.tiktok.com/creative/creativeCenter/trends/hashtag",
+      "params": { "region": "US", "period": 7 },
+      "enabled": true,
+      "_note": "SSR 直出 20 条/页：hashtagID/hashtagName/industryIDs/popularityCurve(7点)/publishCnt/rankIndex/topCreators/vv"
+    },
+    {
+      "name": "cc_top_hashtag",
+      "type": "cc_api",
+      "path": "/creative_radar_api/v1/popular_trend/hashtag/list",
+      "params": { "period": 7, "country": "US", "page": 1, "limit": 50 },
+      "enabled": false,
+      "_note": "40101 废弃，被 cc_ssr 通道取代"
+    },
+    {
+      "name": "cc_top_keyword",
+      "type": "cc_api",
+      "path": "/creative_radar_api/v1/popular_trend/keyword/list",
+      "params": { "period": 7, "country": "US", "page": 1, "limit": 50 },
+      "enabled": false,
+      "_note": "keyword 标签页为客户端加载，SSR 无数据；后续可用浏览器自动化扩展"
+    },
+    {
+      "name": "cc_top_ads",
+      "type": "cc_api",
+      "path": "/creative_radar_api/v1/top_ads/list",
+      "params": { "period": 7, "country": "US", "page": 1, "limit": 50 },
+      "enabled": false,
+      "_note": "40101 废弃"
+    }
+  ]
+}

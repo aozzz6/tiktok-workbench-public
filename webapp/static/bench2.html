@@ -1,0 +1,106 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN" data-pal="P18" data-density="airy" data-motion="bold">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>对标分析 · 新入口（S096）</title>
+<meta name="generator" content="bench2">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="bench2/base.css">
+<link rel="stylesheet" href="bench2/pal-extra.css">
+<link rel="stylesheet" href="bench2/ui.css">
+<link rel="stylesheet" href="bench2/bench.css">
+<link rel="stylesheet" href="bench2/arch-e.css">
+<link rel="stylesheet" href="bench2/fx.css">
+<style>
+  /* 只放本入口自己的东西：加载态、返回旧版的小角标 */
+  #boot-status {
+    position: fixed; inset: 0; z-index: 200; display: grid; place-items: center;
+    background: var(--bg); color: var(--ink); text-align: center; padding: 24px;
+  }
+  #boot-status[hidden] { display: none; }
+  #boot-status .bs-in { max-width: 460px; }
+  #boot-status .bs-sp {
+    width: 26px; height: 26px; margin: 0 auto 14px; border-radius: 50%;
+    border: 2px solid var(--line2); border-top-color: var(--accent);
+    animation: bsspin .8s linear infinite;
+  }
+  @keyframes bsspin { to { transform: rotate(360deg); } }
+  #boot-status.err .bs-sp { animation: none; border-color: var(--bad); }
+  #boot-status h1 { font-size: 15px; font-weight: 620; margin: 0 0 6px; }
+  #boot-status p { font-size: 12px; color: var(--muted); margin: 0; line-height: 1.6; }
+  #boot-status button {
+    margin-top: 14px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 8px; padding: 7px 14px;
+  }
+  .b2-badge {
+    position: fixed; right: 14px; bottom: 14px; z-index: 50;
+    display: flex; align-items: center; gap: 8px;
+    background: color-mix(in oklab, var(--surface) 88%, transparent);
+    border: 1px solid var(--line2); border-radius: 99px; padding: 4px 6px 4px 10px;
+    font-size: 10.5px; color: var(--muted); backdrop-filter: blur(8px);
+    box-shadow: 0 6px 20px -14px rgba(0,0,0,.5);
+  }
+  .b2-badge b { color: var(--ink2); font-weight: 600; }
+  .b2-badge a {
+    color: var(--accent); text-decoration: none; font-weight: 600;
+    border-left: 1px solid var(--line2); padding: 2px 8px 2px 10px; white-space: nowrap;
+  }
+  .b2-badge a:hover { text-decoration: underline; }
+  @media (max-width: 720px) { .b2-badge { right: 8px; bottom: 8px; } }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+
+<div id="boot-status">
+  <div class="bs-in">
+    <div class="bs-sp" aria-hidden="true"></div>
+    <h1>正在读取本地数据</h1>
+    <p id="boot-tip">正在读取 /api/benchmark …</p>
+    <button id="boot-retry" hidden type="button">重试</button>
+  </div>
+</div>
+
+<div class="b2-badge">
+  <span><b>bench2</b> · S096 象限落点 · 真实接口</span>
+  <a href="/" title="回到原来的对标分析屏">返回旧版</a>
+</div>
+
+<script src="bench2/bcore.js"></script>
+<script src="bench2/bench.js"></script>
+<script>window.ARCH = window.ARCH || {};</script>
+<script src="bench2/arch-e.js"></script>
+<script src="bench2/fx.js"></script>
+<script>
+/* 数据就绪后再注入运行时：boot.js 需要 BENCHDATA + ARCH 都在 */
+(function () {
+  var status = document.getElementById('boot-status');
+  var tip = document.getElementById('boot-tip');
+  var booted = false;
+
+  window.__BENCH_ON_DATA__ = function () {
+    if (booted) return;
+    booted = true;
+    var s = document.createElement('script');
+    s.src = 'bench2/boot.js';
+    s.onload = function () {
+      if (status) status.hidden = true;
+      window.__BENCH_ENTRY_READY__ = true;
+    };
+    s.onerror = function () {
+      window.__BENCH_ON_DATA__ = null;
+      status.classList.add('err');
+      status.hidden = false;
+      if (tip) tip.textContent = '运行时 bench2/boot.js 加载失败';
+    };
+    document.body.appendChild(s);
+  };
+})();
+</script>
+<script src="bench2/data-live.js"></script>
+</body>
+</html>
+
+
+
