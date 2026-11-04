@@ -256,3 +256,42 @@ powershell -NoProfile -ExecutionPolicy Bypass -File qa\run-all.ps1
 1. **代理端口**：脚本全部从 `WB_PROXY` 读，但**你的代理软件自己要真的开在那个端口**。
 2. **两个 venv 都是 Python 3.13**，不是系统默认版本。`py -3` 给的可能是 3.14。
 3. **台账和账号清单不进 git**，必须自己带。`pipeline/accounts.json` 没法用 git 回滚，改之前先复制一份。
+
+---
+
+## 10. 更新代码：直连 GitHub 可能不通
+
+`git pull` / `git push` 报这个错，**不是仓库坏了，是网络到不了 GitHub**：
+
+```
+fatal: unable to access 'https://github.com/...': Failed to connect to github.com
+port 443 after 21066 ms: Could not connect to server
+```
+
+先用 `Test-NetConnection` 确认，再决定要不要走代理（**别一上来就怀疑权限**）：
+
+```powershell
+Test-NetConnection -ComputerName github.com -Port 443 -InformationLevel Quiet -WarningAction SilentlyContinue
+```
+
+不通就走本地代理。下面这条是**一次性**的，不改你的 git 配置，最安全：
+
+```powershell
+git -c http.proxy=http://127.0.0.1:7892 push origin main
+```
+
+> 端口填**你自己**的代理端口（本文档其它地方用的是 `WB_PROXY`，本机是 7892）。
+
+如果每次都要加太麻烦，可以设成长期配置——但它会作用于**这台机器上所有仓库**，设之前想清楚：
+
+```powershell
+git config --global http.proxy http://127.0.0.1:7892     # 设
+git config --global --unset http.proxy                   # 想撤的时候
+```
+
+两种常见误判，先说在前面：
+
+| 你可能以为 | 实际 |
+|---|---|
+| 「没权限 / token 过期了」 | 报错写的是 `Could not connect`，那是**连接**问题；权限问题会写 `403` / `Authentication failed` |
+| 「`gh` 已登录就一定能推」 | `gh` 的登录状态和 `git push` 用的传输通道是两件事，网络不通照样失败 |
