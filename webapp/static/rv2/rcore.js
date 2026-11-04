@@ -20,7 +20,8 @@
   };
   const focusTask = (D0, o) => {
     const id = (o && o.task) || window.RV_FOCUS || D0.focusId;
-    return D0.tasks.find((t) => t.id === id) || D0.tasks[0];
+    // 2026-11-04（D1）：任务列表为空时明确返回 null，不返回 undefined 让调用方去 .id/.account 崩掉。
+    return D0.tasks.find((t) => t.id === id) || D0.tasks[0] || null;
   };
   const reportOf = (D0, t) => (t && D0.reports[t.id]) || null;
   const stageTone = (s) => s === 'done' ? 'ok' : s === 'failed' ? 'bad' : s === 'ready' ? 'warn' : 'acc';
@@ -98,7 +99,9 @@
     const c = D0.counts;
     const first = D0.tasks[D0.tasks.length - 1];
     return [
-      { key: 'all', label: '反推任务', value: c.total, unit: '个', cap: first.createdDay + ' 起累计', tone: '', count: c.total },
+      // 2026-11-04（D1）：空任务列表时 first 为 undefined，直接读 .createdDay 会抛 TypeError，
+      // 让 reverse_v2.js 的 renderAll 整体失败（反推页只剩壳）。空态退化为「暂无任务」。
+      { key: 'all', label: '反推任务', value: c.total, unit: '个', cap: (first ? first.createdDay + ' 起累计' : '暂无任务'), tone: '', count: c.total },
       { key: 'done', label: '出报告', value: c.done, unit: '份', cap: '多段 ' + D0.tasks.filter((t) => t.shots > 1).length + ' · 单段 ' + D0.tasks.filter((t) => t.shots === 1).length, tone: 'live', count: c.done },
       { key: 'failed', label: '失败', value: c.failed, unit: '个', cap: '全部卡在下载原片', tone: 'bad', count: c.failed },
       { key: 'ready', label: '待反推', value: c.ready, unit: '个', cap: '素材已就绪', tone: 'warn', count: c.ready },

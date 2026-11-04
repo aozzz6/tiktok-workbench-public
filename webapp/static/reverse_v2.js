@@ -409,7 +409,21 @@
 
   function renderDetail() {
     if (!D) return;
-    var t = D.tasks.filter(function (x) { return x.id === FOCUS; })[0];
+    // 2026-11-04（D1）：列表真的为空时（全新机器 / 清空过）才走空态，不要把这几个单元的
+    // focus 传成 undefined —— 它们内部会 focusTask(...).id，直接抛 TypeError 让整页只剩壳。
+    if (!D.tasks.length) {
+      var EMPTY = '<p class="muted rqv-empty">还没有反推任务：先在上方粘贴视频链接，或点「导入本地视频」。</p>';
+      ['#rqv-shots', '#rqv-refs', '#rqv-prompts', '#rqv-voice'].forEach(function (sel) {
+        var el = $(sel);
+        if (el) el.innerHTML = EMPTY;
+      });
+      var trendEmpty = $('#rqv-trend');
+      if (trendEmpty) trendEmpty.innerHTML = UAPI.trend(D, { kind: 'area' });
+      bindKpiDrill();
+      return;
+    }
+    // 列表非空但 FOCUS 失配（例如刚删掉当前任务）时，退回第一条，保持原有行为。
+    var t = D.tasks.filter(function (x) { return x.id === FOCUS; })[0] || D.tasks[0];
     var R = t ? REPORTS[t.id] : null;
     $('#rqv-shots').innerHTML = UAPI.shots(D, { variant: 'table', task: FOCUS });
     $('#rqv-trend').innerHTML = UAPI.trend(D, { kind: 'area' });
