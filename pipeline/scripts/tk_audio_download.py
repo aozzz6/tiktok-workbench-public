@@ -16,7 +16,7 @@ import sys
 import time
 from pathlib import Path
 
-PROXY = "http://127.0.0.1:7897"
+PROXY = os.environ.get("WB_PROXY", "http://127.0.0.1:7897")
 # 枚举条数上限（0=全量）。见 enumerate_videos 的说明：全量枚举在作品多的账号上极慢。
 ENUM_LIMIT = int(os.environ.get("TK_ENUM_LIMIT", "80"))
 GMT8 = dt.timezone(dt.timedelta(hours=8))  # GMT+8 时区
@@ -76,19 +76,18 @@ def _browser_payload(account: str) -> dict:
     1462 字节），纯 HTTP 指纹/cookie 均绕不过（当日实测）。用系统 Python 的
     playwright（真浏览器）过一次挑战，解析 uid/secUid。"""
 
-    import shutil
     import subprocess
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from tiktok_fetch import find_playwright_python
     helper = Path(__file__).resolve().parent / "pw_uid_fallback.py"
-    cands = [shutil.which("python"), shutil.which("py"), shutil.which("python3"),
-             r"C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe"]
-    runtime = next((c for c in cands if c and Path(c).exists()), None)
-    if not runtime:
-        raise RuntimeError("pw_uid_fallback 未找到系统 Python（需安装 playwright）")
-    cmd = [runtime]
-    if runtime.lower().endswith("py.exe"):
-        cmd.append("-3")
-    cmd.append(str(helper))
-    cmd.append(account)
+    # 2026-11-04：原来按 shutil.which 挑解释器，本机全部命中 WindowsApps 商店占位符，
+    # 必然失败；改由 tiktok_fetch.find_playwright_python() 实跑验证。
+    prefix = find_playwright_python()
+    if not prefix:
+        raise RuntimeError(
+            "pw_uid_fallback 未找到可用的系统 Python（需在系统 Python 里装 playwright，"
+            "或用 WB_PW_PYTHON 指定解释器）")
+    cmd = prefix + [str(helper), account]
     # PLAYWRIGHT_BROWSERS_PATH 指向假路径时会找不到内核 → 清掉让 helper 自定位
     env = {k: v for k, v in os.environ.items() if k != "PLAYWRIGHT_BROWSERS_PATH"}
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=180, env=env,

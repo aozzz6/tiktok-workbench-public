@@ -82,12 +82,15 @@ Three caveats, so nobody is surprised:
 
 - Those are **Windows + Python 3.13 CPU wheels** (`torch==2.7.0+cpu` is the CPU-only
   build from the PyTorch index). Nothing here has been tried on Linux or macOS.
-- `scrapling` is **not** in the list. It is optional — the scraper prefers it and
-  falls back to `curl_cffi` when it is absent (`pipeline\scripts\tiktok_fetch.py`),
-  so nothing breaks without it.
+- `scrapling` is **no longer a dependency — do not install it**. The fetch layer is now
+  one thing only: `curl_cffi`'s chrome124 fingerprint plus the local proxy
+  (`pipeline\scripts\tiktok_fetch.py`). Until 2026-11-04 this file described a
+  "scrapling first, curl_cffi fallback" pair, but scrapling was never installed and that
+  layer never ran; it has been removed. Its `Fetcher` is built on curl_cffi anyway, so
+  installing it buys nothing new.
 - `playwright` is **not** in the list either. Only the browser fallback
-  (`pw_detail_fallback.py`) uses it, and on this machine it lives in the system
-  Python, not in `pipeline\.venv`.
+  (`pw_detail_fallback.py` / `pw_uid_fallback.py`) uses it, and it must live in the
+  **system Python**, not in `pipeline\.venv` — see "The browser fallback" below.
 
 The PyTorch CPU index that `torch==2.7.0+cpu` needs is declared **inside**
 `pipeline\requirements.txt` itself (an `--extra-index-url` line at the top), so the
@@ -155,6 +158,9 @@ Pipeline unit tests — one script per area, each exits 0/1 and prints `通过 N
 
 ```powershell
 cd D:\workbuddy_project\tiktok
+# The cases print ✓ / ✗ / ⚠. Without this line a default GBK console raises
+# UnicodeEncodeError and the case is reported as a failure.
+$env:PYTHONIOENCODING = "utf-8"
 Get-ChildItem pipeline\tests\test_*.py | ForEach-Object {
     & .\pipeline\.venv\Scripts\python.exe $_.FullName
 }
@@ -163,13 +169,31 @@ Get-ChildItem pipeline\tests\test_*.py | ForEach-Object {
 Exception: `test_acceptance_regressions.py` is a stdlib `unittest` module, so it
 prints `Ran N tests` / `OK` instead of `通过 N / M`. It still exits 0/1.
 
-Dashboard tests — Python and Node side by side:
+Dashboard tests — Python and Node side by side. **Two things are easy to get wrong,
+and getting them wrong produces a wall of false failures:**
+
+- **Use the `webapp\.venv` interpreter.** These cases `import app`, and `fastapi` is
+  installed only in that environment — running them with `pipeline\.venv` gives
+  `ModuleNotFoundError: No module named 'fastapi'` across the board.
+- **Run from `webapp\`.** The Node cases read `static/index.html` by relative path,
+  so running them from `webapp\tests` gives `ENOENT: no such file or directory`.
+
+The Node cases need `jsdom`; it is declared in `webapp\package.json` under
+`devDependencies`:
 
 ```powershell
-cd webapp\tests
-..\..\pipeline\.venv\Scripts\python.exe accounts_write.test.py   # any *.test.py
-node accounts_admin_ui.test.js                                    # any *.test.js
+cd webapp
+npm install                                                       # first time; installs jsdom
+$env:PYTHONIOENCODING = "utf-8"
+.\.venv\Scripts\python.exe tests\accounts_write.test.py   # any *.test.py
+node tests\overview_ui.test.js                             # any *.test.js
 ```
+
+> Note: some legacy cases (`bench_*.test.js`, `accounts_admin_ui.test.js`,
+> `sheet_view.test.js`, …) target the DOM from before the 对标 page was rewritten
+> and are red on purpose-unchanged code. They need rewriting; they are not an
+> environment problem. The regression case added for this fix is
+> `tests\rv2_kpi_empty.test.js`.
 
 Acceptance cases for the current change, through the shared runner (run this from
 the repository root — the path below is relative to it):
@@ -318,14 +342,29 @@ you commit anyway: a cookie file matched by none of those patterns will be picke
 up. One caveat: an ignore rule does not untrack a file git already tracks — for
 those you need `git rm --cached <file>`.
 
-### The browser fallback is off by default
+### The browser fallback (getting past the WAF challenge)
 
-`pipeline/scripts/pw_detail_fallback.py` and `pw_uid_fallback.py` (the WAF
-challenge fallback) must run under a **system Python that has `playwright` and a
-chromium build installed** — not the pipeline venv. Without that they are simply
-skipped: the scraper prints
-`[warn] 浏览器兜底未找到系统 Python（需安装 playwright），跳过`
-and carries on. Nothing breaks; you only lose the fallback.
+TikTok sometimes makes the detail-page SSR return a WAF challenge page, and then no pure
+HTTP fingerprint (curl_cffi chrome124 included) gets through — only a real browser running
+the JS can reach the embedded data. `pw_detail_fallback.py` and `pw_uid_fallback.py` are
+that fallback, and they must run under a **system Python that has `playwright`** — not the
+pipeline venv:
+
+```powershell
+py -3 -m pip install "playwright==1.64.1"
+# The browser binary reuses the chromium-1248 already on this machine
+# (%LOCALAPPDATA%\ms-playwright); pick_browsers_dir() finds it automatically.
+# Only if the machine has no browser build at all:
+py -3 -m playwright install chromium
+```
+
+You do not pick the interpreter by hand: `tiktok_fetch.find_playwright_python()` tries each
+candidate by actually running `import playwright` (it no longer trusts `shutil.which`, whose
+names on this machine all resolve to Store placeholders), and `WB_PW_PYTHON` overrides it.
+When nothing works the step is skipped and the scraper prints
+`[warn] 浏览器兜底未找到可用 Python（…），跳过`; nothing else breaks.
+
+The proxy comes from `WB_PROXY` — never hard-code a port in the fallback scripts.
 
 ### Starting from the sample account list
 

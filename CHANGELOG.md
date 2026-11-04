@@ -3,6 +3,66 @@
 All notable changes to this workbench are recorded here, newest first.
 This project has no version tags yet, so entries are dated instead of numbered.
 
+## 2026-11-04 — The scraping layer is one honest layer, and the WAF fallback works
+
+### Changed
+
+- `pipeline/scripts/tiktok_fetch.py` no longer pretends to have two fetch layers. It tried
+  `scrapling`'s `Fetcher` first and fell back to `curl_cffi`, but scrapling was never in
+  `requirements.txt` and never installed, so the first layer never ran — and its `Fetcher`
+  is built on curl_cffi anyway, so installing it would not have added a second capability.
+  The module is now explicitly "curl_cffi chrome124 fingerprint + proxy". At the time of the
+  change a detail-page fetch through curl_cffi returned 200 with a full `itemStruct`, so
+  nothing was broken by removing the dead layer.
+
+### Fixed
+
+- **The browser fallback (for WAF challenge pages) was broken four ways and now works.**
+  It needed `playwright` (absent), hard-coded proxy port 7897 while this machine uses 7892,
+  picked its interpreter with `shutil.which("python"/"py")` — on this machine those resolve
+  to Store app-execution aliases that exit 9009 — and one candidate was a
+  `C:\Users\Administrator\…` path that does not exist. Both `pw_*.py` now read `WB_PROXY`,
+  and `tiktok_fetch.find_playwright_python()` chooses an interpreter by actually running
+  `import playwright` (override with `WB_PW_PYTHON`).
+- Verified end to end: `pw_detail_fallback.py` returns `status: ok` with a full `itemStruct`,
+  `pw_uid_fallback.py` returns uid/secUid/nickname, and the scraper's
+  `browser_batch_fallback()` resolves to `('ok', True)`.
+
+### Added
+
+- `pipeline/scripts/probe_waf.py` — a one-request probe that reports whether a detail page
+  came back as real data or as a WAF challenge page, so "is the fallback needed today?" can
+  be answered instead of assumed.
+
+## 2026-11-04 — The reverse page now opens on a fresh machine
+
+### Fixed
+
+- **「提示词反推」renders when there are zero reverse-engineering tasks.** On a fresh
+  install `GET /api/reverse/list` returns an empty list, and the page used to throw
+  `TypeError: Cannot read properties of undefined (reading 'createdDay')` while building
+  its KPI row, so `renderAll()` aborted and the view stayed an empty shell. The KPI now
+  shows `暂无任务`, and the task-detail blocks get an empty-state hint instead of being
+  handed `undefined`. Regression case: `webapp/tests/rv2_kpi_empty.test.js`.
+- The dashboard test commands in `README.md` / `README-zh.md` were wrong and produced a
+  wall of false failures: they used `pipeline\.venv` (which has no `fastapi`) and ran the
+  Node cases from `webapp\tests` (which breaks their relative `static/index.html` reads).
+  Both are corrected, and the pipeline test block now sets `PYTHONIOENCODING=utf-8`, so the
+  `✓`/`✗` output no longer raises `UnicodeEncodeError` on a default GBK console.
+
+### Added
+
+- `jsdom` is now declared in `webapp/package.json` under `devDependencies`. All 42
+  `webapp/tests/*.test.js` cases `require("jsdom")`, but it was missing, so a clean
+  `npm install` could not run a single Node case.
+
+### Known: a batch of UI cases is stale
+
+Around 20 cases under `webapp/tests/` (`bench_*.test.js`, `accounts_admin_ui.test.js`,
+`sheet_view.test.js`, …) still assert against the pre-`bench2` DOM (`#bench-accounts` and
+friends), which the 对标 page no longer renders. They are red on unchanged code and need
+rewriting; they are not an environment problem.
+
 ## 2026-11-02 — Scrape failures now say the real reason, and no longer destroy history
 
 ### Changed

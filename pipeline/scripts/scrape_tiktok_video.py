@@ -59,7 +59,7 @@ NETWORK_STATUS_CODES = {"100001"}
 
 
 def fetch_page(url: str) -> str:
-    """统一抓取层（L1 scrapling → curl_cffi 兜底）+ 退避重试
+    """统一抓取层（curl_cffi chrome124 指纹 + 代理）+ 退避重试
     （TikTok 间歇性 SSL 掐断/风控 → 重试）。"""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from tiktok_fetch import fetch_html
@@ -77,21 +77,20 @@ def browser_batch_fallback(account: str, vids: list[str]) -> dict[str, dict]:
     """★ 2026-10-29 浏览器兜底：TikTok WAF 波及详情页 SSR 时（恒返挑战页，
     指纹/重试/cookie 均无效），用系统 Python 的 playwright 批量抓 itemStruct。
     返回 {vid: {"status": "ok"|"removed"|"blocked", "item": ...}}，异常返回 {}。"""
-    import shutil
     import subprocess
     if not vids:
         return {}
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from tiktok_fetch import find_playwright_python
     helper = Path(__file__).resolve().parent / "pw_detail_fallback.py"
-    cands = [shutil.which("python"), shutil.which("py"), shutil.which("python3"),
-             r"C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe"]
-    runtime = next((c for c in cands if c and Path(c).exists()), None)
-    if not runtime:
-        print("[warn] 浏览器兜底未找到系统 Python（需安装 playwright），跳过", file=sys.stderr)
+    # 2026-11-04：原来按 shutil.which 挑解释器，本机全部命中 WindowsApps 商店占位符，
+    # 必然失败；改由 tiktok_fetch.find_playwright_python() 实跑验证。
+    prefix = find_playwright_python()
+    if not prefix:
+        print("[warn] 浏览器兜底未找到可用 Python（系统 Python 需装 playwright，"
+              "或用 WB_PW_PYTHON 指定解释器），跳过", file=sys.stderr)
         return {}
-    cmd = [runtime]
-    if runtime.lower().endswith("py.exe"):
-        cmd.append("-3")
-    cmd += [str(helper), account, *vids]
+    cmd = prefix + [str(helper), account, *vids]
     env = {k: v for k, v in os.environ.items() if k != "PLAYWRIGHT_BROWSERS_PATH"}
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, env=env,

@@ -62,7 +62,9 @@ def fetch_items_browser(account: str, vids: list, cookie_file: str) -> dict:
     from playwright.sync_api import sync_playwright
     UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-    PROXY = "http://127.0.0.1:7897"
+    # 2026-11-04：原来写死 7897，与主流链路（WB_PROXY，本机实际 7892）不一致，
+    # 代理一改端口兜底就连不上。统一读环境变量。
+    PROXY = os.environ.get("WB_PROXY", "http://127.0.0.1:7897")
     results = []
     with sync_playwright() as pl:
         browser = pl.chromium.launch(headless=True, proxy={"server": PROXY})

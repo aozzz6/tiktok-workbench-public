@@ -71,10 +71,12 @@ pipeline\.venv\Scripts\python.exe -m pip install -r pipeline\requirements.txt
 
 - 这套是 **Windows + Python 3.13 的 CPU 轮子**（`torch==2.7.0+cpu` 是 PyTorch 索引里的纯 CPU
   构建）。**Linux / macOS 完全没验证过。**
-- `scrapling` **不在**清单里。它是可选的：抓取层优先用它，没有就退回 `curl_cffi`
-  （`pipeline\scripts\tiktok_fetch.py`），缺了不影响跑通。
-- `playwright` 也**不在**清单里。只有浏览器兜底（`pw_detail_fallback.py`）用得上它，而本机上
-  它是装在系统 Python 里的，不在 `pipeline\.venv`。
+- `scrapling` **不再是依赖，也不要再装它**。抓取层现在就一层：`curl_cffi` 的 chrome124 指纹 +
+  本地代理（`pipeline\scripts\tiktok_fetch.py`）。2026-11-04 之前这里写着「scrapling 优先、
+  curl_cffi 兜底」，但 scrapling 从来没装过、那层从未生效，已经删掉；它底层同样走 curl_cffi，
+  装了买不到新能力。
+- `playwright` **不在**清单里。只有浏览器兜底（`pw_detail_fallback.py` / `pw_uid_fallback.py`）
+  用得上它，而且要装在**系统 Python** 里，不在 `pipeline\.venv` —— 装法与验证见下面「浏览器兜底」。
 
 `torch==2.7.0+cpu` 需要的 PyTorch CPU 索引**写在 `pipeline\requirements.txt` 里**
 （顶部一行 `--extra-index-url`），所以上面那条命令不用再带参数。
@@ -134,6 +136,8 @@ rem 只抓指定视频并「合并」进已有文件（保住历史条目）
 
 ```powershell
 cd D:\workbuddy_project\tiktok
+# 用例里有 ✓ / ✗ / ⚠：不设这一行，默认 GBK 控制台会 UnicodeEncodeError，把用例误判成失败
+$env:PYTHONIOENCODING = "utf-8"
 Get-ChildItem pipeline\tests\test_*.py | ForEach-Object {
     & .\pipeline\.venv\Scripts\python.exe $_.FullName
 }
@@ -142,13 +146,26 @@ Get-ChildItem pipeline\tests\test_*.py | ForEach-Object {
 例外：`test_acceptance_regressions.py` 是 stdlib `unittest` 模块，打印的是 `Ran N tests` / `OK`，
 不是 `通过 N / M`；退出码仍是 0/1。
 
-看板测试 —— Python 与 Node 并存：
+看板测试 —— Python 与 Node 并存。**这里有两件事容易搞错，搞错了会得到一片假失败：**
+
+- **解释器要用 `webapp\.venv`。** 看板用例 `import app`，而 `fastapi` 只装在那一边；
+  用 `pipeline\.venv` 跑会整片 `ModuleNotFoundError: No module named 'fastapi'`。
+- **工作目录要在 `webapp\`。** Node 用例按相对路径读 `static/index.html`，
+  在 `webapp\tests` 下跑会 `ENOENT: no such file or directory`。
+
+Node 用例依赖 `jsdom`，它已经写在 `webapp\package.json` 的 `devDependencies` 里：
 
 ```powershell
-cd webapp\tests
-..\..\pipeline\.venv\Scripts\python.exe accounts_write.test.py   # 任意 *.test.py
-node accounts_admin_ui.test.js                                    # 任意 *.test.js
+cd webapp
+npm install                                                       # 首次，装 jsdom
+$env:PYTHONIOENCODING = "utf-8"
+.\.venv\Scripts\python.exe tests\accounts_write.test.py   # 任意 *.test.py
+node tests\overview_ui.test.js                             # 任意 *.test.js
 ```
+
+> 注意：部分历史用例（`bench_*.test.js`、`accounts_admin_ui.test.js`、`sheet_view.test.js` 等）
+> 针对的是对标页重写前的旧 DOM，当前本来就是红的，与上面这条命令无关 —— 它们需要重写，不是环境问题。
+> 本次修复的回归用例是 `tests\rv2_kpi_empty.test.js`。
 
 本次改动的验收用例，走总跑脚本（**在仓库根目录下跑**，下面这个相对路径是相对仓库根的）：
 
@@ -277,13 +294,25 @@ pipeline\.venv\Scripts\python.exe -m pip install -r pipeline\requirements.txt
 还有一个前提：忽略规则**不会**把已经被 git 跟踪的文件移出版本库 —— 那种要
 `git rm --cached <文件>`。
 
-### 浏览器兜底默认是不可用的
+### 浏览器兜底（过 WAF 挑战页）
 
-`pipeline/scripts/pw_detail_fallback.py` 和 `pw_uid_fallback.py`（过 WAF 挑战页的兜底）
-必须由**装了 `playwright` 和 chromium 的系统 Python** 跑，不是流水线的 venv。没装就会直接
-跳过：抓取脚本会打一行
-`[warn] 浏览器兜底未找到系统 Python（需安装 playwright），跳过`
-然后继续。什么都不会坏 —— 只是少了兜底。
+TikTok 偶尔会让详情页 SSR 恒返 WAF 挑战页，这时纯 HTTP 指纹（含 curl_cffi chrome124）无效，
+只有真浏览器执行 JS 才能拿到内嵌数据。`pw_detail_fallback.py` 与 `pw_uid_fallback.py`
+就是这层兜底，必须由**装了 `playwright` 的系统 Python** 跑，不是流水线的 venv：
+
+```powershell
+py -3 -m pip install "playwright==1.64.1"
+# 浏览器内核复用本机已有的 chromium-1248（%LOCALAPPDATA%\ms-playwright），
+# 脚本里的 pick_browsers_dir() 会自动定位；机器上没有内核时才需要：
+py -3 -m playwright install chromium
+```
+
+解释器不用手填：`tiktok_fetch.find_playwright_python()` 会逐个**实跑** `import playwright`
+验证（不再靠 `shutil.which`，本机那些名字全是商店占位符），也可以用 `WB_PW_PYTHON`
+显式指定。找不到就跳过，抓取脚本会打一行
+`[warn] 浏览器兜底未找到可用 Python（…），跳过`，其余流程不受影响。
+
+代理统一读 `WB_PROXY`——不要在兜底脚本里写死端口。
 
 ### 从示例账号清单开始
 
