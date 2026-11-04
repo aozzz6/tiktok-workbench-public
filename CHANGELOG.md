@@ -3,6 +3,18 @@
 All notable changes to this workbench are recorded here, newest first.
 This project has no version tags yet, so entries are dated instead of numbered.
 
+## 2026-11-04 — A deploy checklist for the next machine
+
+### Added
+
+- `DEPLOY_CHECKLIST.md` — everything that went wrong while testing this build on a real
+  machine, rewritten as a checklist the next deployer can follow: a one-minute self-check
+  script (paste and run), the eight environment variables and what breaks without each one,
+  a symptom → cause → fix table covering the interpreter, proxy port, encoding, `.ps1` BOM,
+  ledger location and favicon-level annoyances, and the real test baselines (8/8 pipeline,
+  50/53 dashboard Python, 19/43 dashboard Node, 2/3 QA) so a fresh machine does not panic at
+  the known-red legacy cases.
+
 ## 2026-11-04 — The scraping layer is one honest layer, and the WAF fallback works
 
 ### Changed

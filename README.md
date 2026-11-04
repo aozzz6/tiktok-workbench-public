@@ -387,6 +387,9 @@ Two things about that file:
   `:726`), so a missing key is an immediate `KeyError` at startup.
 ## More reading
 
+- `DEPLOY_CHECKLIST.md` — **the deploy self-check**: run its one-minute check right after
+  installing. It catches most of the traps up front (interpreter, proxy port, ledger location,
+  test baselines, the WAF fallback).
 - `DEPLOY_GUIDE.md` — moving the dashboard-only copy to another machine. Note that
   it still says port 8787 and 15 columns; both are out of date (8789, 14 columns).
 - `工作上下文归档_最新.md` — working context: fixed rules, paths, interpreters.
