@@ -79,8 +79,13 @@ REQUIRED_FEATURES = ("repair", "ai")
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
-def _listening(port: int, timeout: float = 1.5) -> bool:
-    """端口上有没有东西在听。"""
+def _listening(port: int, timeout: float = 0.25) -> bool:
+    """端口上有没有东西在听。
+
+    超时故意压到 0.25s：在某些 Windows 配置下，连接一个已关闭的本机端口不会立刻
+    refused，而是等满超时。probe() 每轮要扫 5 个端口，1.5s 的超时会拖成 7.5s
+    （M1 要求双击到 ready ≤5 秒）。真正有人监听时 connect 是毫秒级返回，不受影响。
+    """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(timeout)
         try:
@@ -150,9 +155,16 @@ def health(port: int, timeout: float = 2.5):
 
 
 def probe(port: int) -> str:
+    """端口三态。先试 bind（空端口毫秒级返回），绑不上再连一下看是谁在听。
+
+    顺序很重要：反过来的话，每个空端口都要等满 _listening 的超时，
+    5 个端口就是 5 倍等待（实测 7.5s，直接把启动拖过 M1 的 5 秒线）。
+    """
+    if _bindable(port):
+        return "free"
     if _listening(port):
         return "workbench" if health(port) else "foreign"
-    return "free" if _bindable(port) else "foreign"
+    return "foreign"
 
 
 def wants_restart(argv) -> bool:

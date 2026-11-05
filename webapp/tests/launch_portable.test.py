@@ -16,10 +16,15 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
 import os
+import socket
 import sys
 import tempfile
+import threading
+import time
 import traceback
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -287,6 +292,122 @@ def _restart_flag():
 
 
 check("wants_restart 只认 --restart", _restart_flag)
+
+
+# ── 8. probe() 性能与健康判据（M1 DoD 1 / T-15 DoD 8：双击到 ready ≤5 秒） ──
+print("[8] probe()：空端口要快，有人监听仍判 workbench/foreign")
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _port_free(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def _listening_is_fast():
+    mod = load_with({})
+    port = _free_port()
+    t0 = time.perf_counter()
+    listening = mod._listening(port)
+    elapsed = time.perf_counter() - t0
+    assert_(listening is False, f"空端口不应判为有人在听：{port}")
+    assert_(elapsed < 0.5,
+            f"_listening(空端口) 耗时 {elapsed:.2f}s，应 <0.5s（默认超时要降到 0.2~0.3s）")
+
+
+check("_listening(空端口) 默认超时下 < 0.5 秒", _listening_is_fast)
+
+
+def _probe_five_free_ports_fast():
+    mod = load_with({})
+    ports = list(mod.PORTS)
+    if not all(_port_free(p) for p in ports):
+        # 机器上已有本工作台/别的程序占着候选端口：用同样数量的临时空端口做同一判据。
+        ports = [_free_port() for _ in range(len(mod.PORTS))]
+    t0 = time.perf_counter()
+    states = [(p, mod.probe(p)) for p in ports]
+    elapsed = time.perf_counter() - t0
+    assert_(all(state == "free" for _, state in states),
+            f"空端口应判 free，实得 {states!r}")
+    assert_(elapsed < 1.0, f"5 个空端口 probe 一轮耗时 {elapsed:.2f}s，应 <1.0s")
+
+
+check("5 个空端口 probe 一轮 < 1.0 秒且全判 free", _probe_five_free_ports_fast)
+
+
+def _probe_foreign_raw_socket():
+    mod = load_with({})
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+    try:
+        assert_(mod.probe(port) == "foreign",
+                f"有人在听但不是本工作台时 {port} 应判 foreign")
+    finally:
+        srv.close()
+
+
+check("有人在听但不是 HTTP 工作台 → foreign", _probe_foreign_raw_socket)
+
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    payload = {}
+
+    def do_GET(self):
+        body = json.dumps(type(self).payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+def _http_probe(payload, want):
+    class Handler(_HealthHandler):
+        pass
+
+    Handler.payload = payload
+    srv = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    try:
+        mod = load_with({})
+        got = mod.probe(port)
+        assert_(got == want, f"health={payload!r} 时 probe({port})={got!r}，期望 {want!r}")
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def _probe_workbench_http():
+    _http_probe({
+        "ok": True, "ts": 1.0, "api_version": 4, "features": ["repair", "ai"],
+        "diagnostics": {"pipeline_dir": "x", "ledger_files": []},
+    }, "workbench")
+
+
+check("HTTP 返回本工作台 health 指纹 → workbench", _probe_workbench_http)
+
+
+def _probe_foreign_http():
+    _http_probe({"ok": True, "ts": 1.0}, "foreign")
+
+
+check("HTTP 返回但不是本工作台指纹（缺 diagnostics）→ foreign", _probe_foreign_http)
 
 
 print(f"\n通过 {_ok} / {_ok + _fail}")
