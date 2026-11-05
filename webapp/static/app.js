@@ -2030,67 +2030,15 @@ function runAddValidate() {
 }
 
 /* 面向地区 → 转写语言联动（与后端 config.REGION_LANG_MAP 同口径） */
-const REGION_LANG_UI = { us: "en", uk: "en", eu: "en", de: "de", fr: "fr",
-                         es: "es", it: "it", cn: "zh", "cn-hk": "zh",
-                         "cn-tw": "zh", jp: "jp", kr: "kr" };
-function syncAddLang() {
-  const regionEl = $("#run-add-region");
-  const langEl = $("#run-add-lang");
-  if (!regionEl || !langEl) return;
-  const r = regionEl.value;
-  if (r && REGION_LANG_UI[r]) langEl.value = REGION_LANG_UI[r];
-  else langEl.value = "";   // 未标地区 → 交后端自动推断
-}
-
-async function submitRunAdd() {
-  const name = ($("#run-add-name").value || "").trim();
-  const hint = $("#run-add-hint");
-  if (!runAddValidate()) {
-    if (hint && !hint.innerHTML) hint.innerHTML = '<span class="hint-bad">✗ 账号名必填</span>';
-    return toast("请先修正账号名");
-  }
-  const region = ($("#run-add-region") || {}).value || "";
-  const payload = {
-    account: name,
-    region: region,
-    lang: ($("#run-add-lang") || {}).value || "",   // 空 = 让后端按 region 推断
-    nickname: ($("#run-add-nickname").value || "").trim(),
-    tags: ($("#run-add-tags").value || "").trim(),
-  };
-  try {
-    await api("/api/accounts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-  } catch (e) {
-    if (hint) hint.innerHTML = `<span class="hint-bad">✗ 保存失败：${esc(e.message)}</span>`;
-    return toast("新增失败：" + e.message);
-  }
-  toast("已创建并选用 " + name);
-  if (hint) hint.innerHTML = `<span class="hint-ok">✓ 已创建 ${esc(name)} 并在下拉中选用。下一步：点「开始运行」拉取该账号数据（建议同时勾选核心链）</span>`;
-  try {
-    CFG = await api("/api/config");           // 刷新账号清单
-    fillAccountSelects();
-    $("#run-account").value = name;           // 选用新账号
-  } catch (e) { console.warn("[accounts] 账号清单刷新失败（下次 boot 自愈）", e); }
-  $("#run-add-name").value = "";
-  $("#run-add-nickname").value = "";
-  $("#run-add-tags").value = "";
-  refreshActiveView();
-}
-
-/* ─────────── 一键运行 · 人话进度面板 ─────────── */
-const STEP_META = {
-  s0_check:     { name: "检查预热",   desc: "校验账号配置与磁盘空间" },
-  s1_download:  { name: "音频下载",   desc: "把视频声音下载到本地" },
-  s2_scrape:    { name: "视频抓取",   desc: "采集播放/点赞/商品等数据" },
-  s5_transcribe:{ name: "语音转文字", desc: "把音频转成文字稿" },
-  s5b_products: { name: "商品提取",   desc: "从视频文案提取挂车商品" },
-  s9_report:    { name: "生成报告",   desc: "汇总当日运行报告" },
-  s3_4_sheet:   { name: "台账录入",   desc: "由 Agent 在会话内完成" },
-  s6_translate: { name: "中文翻译",   desc: "由 Agent 在会话内完成" },
-  s7_backfill:  { name: "台账回填",   desc: "由 Agent 在会话内完成" },
+const REGION_LANG_UI = {
+  us: "en", uk: "en", eu: "en", au: "en", ca: "en", nz: "en", sg: "en",
+  de: "de", at: "de", ch: "de", fr: "fr", be: "fr",
+  es: "es", mx: "es", ar: "es", cl: "es", co: "es", pe: "es",
+  it: "it", pt: "pt", br: "pt", nl: "nl", pl: "pl", se: "sv", no: "no",
+  dk: "da", fi: "fi", ru: "ru", ua: "uk", tr: "tr", gr: "el", cz: "cs", ro: "ro",
+  sa: "ar", ae: "ar", eg: "ar", il: "he", ir: "fa",
+  in: "hi", pk: "ur", bd: "bn", id: "id", my: "ms", ph: "tl", th: "th", vn: "vi",
+  cn: "zh", "cn-hk": "zh", "cn-tw": "zh", jp: "jp", kr: "kr",
 };
 let runProgress = null;          // {order:[key], state:{key:{status,note,startedAt}}}
 let runProgressTimer = null;
@@ -5225,16 +5173,35 @@ let acctFormMode = "create";
 const ACCT_NAME_RE = /^[a-z0-9_.]+$/;
 const ACCT_SHEET_PREFIX = "对标记录-";
 const ACCT_REGION_LABEL = {
-  "": "未标注", us: "美国", uk: "英国", eu: "欧洲", de: "德国", fr: "法国",
-  es: "西语区", it: "意区", cn: "中国大陆", "cn-hk": "中国香港", "cn-tw": "中国台湾",
+  "": "未标注", us: "美国", uk: "英国", eu: "欧洲", au: "澳大利亚", ca: "加拿大", sg: "新加坡",
+  de: "德国", at: "奥地利", ch: "瑞士", fr: "法国", be: "比利时",
+  es: "西班牙", mx: "墨西哥", ar: "阿根廷", cl: "智利", co: "哥伦比亚", pe: "秘鲁",
+  it: "意大利", pt: "葡萄牙", br: "巴西",
+  nl: "荷兰", pl: "波兰", se: "瑞典", no: "挪威", dk: "丹麦", fi: "芬兰",
+  ru: "俄罗斯", ua: "乌克兰", tr: "土耳其", gr: "希腊", cz: "捷克", ro: "罗马尼亚",
+  sa: "沙特", ae: "阿联酋", eg: "埃及", il: "以色列", ir: "伊朗",
+  in: "印度", pk: "巴基斯坦", bd: "孟加拉", id: "印尼", my: "马来西亚", ph: "菲律宾",
+  th: "泰国", vn: "越南", cn: "中国大陆", "cn-hk": "中国香港", "cn-tw": "中国台湾",
   jp: "日本", kr: "韩国",
 };
 const ACCT_REGION_LANG = {
-  us: "en", uk: "en", eu: "en", de: "de", fr: "fr", es: "es", it: "it",
+  us: "en", uk: "en", eu: "en", au: "en", ca: "en", nz: "en", sg: "en",
+  de: "de", at: "de", ch: "de", fr: "fr", be: "fr",
+  es: "es", mx: "es", ar: "es", cl: "es", co: "es", pe: "es",
+  it: "it", pt: "pt", br: "pt", nl: "nl", pl: "pl", se: "sv", no: "no",
+  dk: "da", fi: "fi", ru: "ru", ua: "uk", tr: "tr", gr: "el", cz: "cs", ro: "ro",
+  sa: "ar", ae: "ar", eg: "ar", il: "he", ir: "fa",
+  in: "hi", pk: "ur", bd: "bn", id: "id", my: "ms", ph: "tl", th: "th", vn: "vi",
   cn: "zh", "cn-hk": "zh", "cn-tw": "zh", jp: "jp", kr: "kr",
 };
-const ACCT_LANGS = [["en", "en（英文）"], ["de", "de（德语）"], ["fr", "fr（法语）"],
-  ["es", "es（西语）"], ["it", "it（意语）"], ["zh", "zh（中文）"],
+const ACCT_LANGS = [["auto", "auto（自动识别）"], ["en", "en（英语）"], ["de", "de（德语）"],
+  ["fr", "fr（法语）"], ["es", "es（西语）"], ["it", "it（意语）"], ["pt", "pt（葡语）"],
+  ["nl", "nl（荷兰语）"], ["pl", "pl（波兰语）"], ["sv", "sv（瑞典语）"], ["da", "da（丹麦语）"],
+  ["no", "no（挪威语）"], ["fi", "fi（芬兰语）"], ["ru", "ru（俄语）"], ["uk", "uk（乌克兰语）"],
+  ["tr", "tr（土耳其语）"], ["el", "el（希腊语）"], ["cs", "cs（捷克语）"], ["ro", "ro（罗马尼亚语）"],
+  ["ar", "ar（阿拉伯语）"], ["he", "he（希伯来语）"], ["fa", "fa（波斯语）"], ["hi", "hi（印地语）"],
+  ["ur", "ur（乌尔都语）"], ["bn", "bn（孟加拉语）"], ["id", "id（印尼语）"], ["ms", "ms（马来语）"],
+  ["tl", "tl（菲律宾语）"], ["th", "th（泰语）"], ["vi", "vi（越南语）"], ["zh", "zh（中文）"],
   ["jp", "jp（日语）"], ["kr", "kr（韩语）"]];
 
 /* 后端错误体是 {"detail":"..."}，api() 抛出的是 "400 {...}"：拆出人话 */

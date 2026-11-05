@@ -34,6 +34,8 @@
 """
 from __future__ import annotations
 
+import os
+
 import argparse
 import datetime as dt
 import json
@@ -41,11 +43,11 @@ import re
 import sys
 import time
 from pathlib import Path
-
+from proxy_detect import detect_proxy  # noqa: E402
 BASE = "https://ads.tiktok.com"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-PROXY = "http://127.0.0.1:7897"
+PROXY = os.environ.get("WB_PROXY") or detect_proxy()
 RATE_LIMIT_SEC = 3.0  # 源间隔，防风控
 
 PIPELINE_DIR = Path(__file__).resolve().parent.parent

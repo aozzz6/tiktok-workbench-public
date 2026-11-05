@@ -9,12 +9,14 @@ build_ledger_15col.py apply-trans 回填 N 列。
 
 用法: python scripts/translate_pending.py
 """
+import os
+
 import json
 import random
 import subprocess
 import time
 from pathlib import Path
-
+from proxy_detect import detect_proxy  # noqa: E402
 PIPE = Path(__file__).resolve().parent.parent
 OUT = PIPE / "output"
 PENDING = OUT / "pending_trans.json"
@@ -22,7 +24,7 @@ CACHE = OUT / "trans_cache.json"
 RESULT = OUT / "translations.json"
 GTX = "https://translate.googleapis.com/translate_a/single"
 CURL = "curl"
-PROXY = "http://127.0.0.1:7897"
+PROXY = os.environ.get("WB_PROXY") or detect_proxy()
 
 
 def translate(text, sl, retries=4):

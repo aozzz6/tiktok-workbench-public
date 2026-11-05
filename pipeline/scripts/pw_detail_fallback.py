@@ -20,7 +20,7 @@ import re
 import sys
 import time
 from pathlib import Path
-
+from proxy_detect import detect_proxy  # noqa: E402
 
 def pick_browsers_dir():
     """auto 定位 playwright 浏览器缓存目录（含 chromium-* 子目录）覆盖 PLAYWRIGHT_BROWSERS_PATH。"""
@@ -64,7 +64,7 @@ def fetch_items_browser(account: str, vids: list, cookie_file: str) -> dict:
           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
     # 2026-11-04：原来写死 7897，与主流链路（WB_PROXY，本机实际 7892）不一致，
     # 代理一改端口兜底就连不上。统一读环境变量。
-    PROXY = os.environ.get("WB_PROXY", "http://127.0.0.1:7897")
+    PROXY = os.environ.get("WB_PROXY") or detect_proxy()
     results = []
     with sync_playwright() as pl:
         browser = pl.chromium.launch(headless=True, proxy={"server": PROXY})

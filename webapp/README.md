@@ -68,7 +68,7 @@ webapp/
 | `WB_PIPELINE_DIR` | `D:/workbuddy_project/tiktok/pipeline` | pipeline 目录 |
 | `WB_PYTHON` | `<pipeline>/.venv/Scripts/python.exe` | 跑流水线的解释器 |
 | `WB_HOME` | `C:/Users/Administrator/.workbuddy` | WorkBuddy 用户目录（读 skills） |
-| `WB_PROXY` | `http://127.0.0.1:7897` | TikTok 抓取代理 |
+| `WB_PROXY` | 自动探测 | TikTok 抓取代理（不设时：系统代理 → 常见本地端口 7892/7897/10809…） |
 | `WB_LEDGER_DIR` | `D:/1/对标账号` | 台账表格目录，**总览面板的唯一数据源**（自动扫描目录内全部 xlsx） |
 | `WB_PORT` | 8787（`app.py` 直接运行时） | 监听端口；自启 / `wb_start.ps1` / `start.bat` 会设成 8789 |
 | `WB_RUNS_FILE` | `<webapp>/data/runs.jsonl` | 运行记录文件；测试 / QA 用它隔离生产 |

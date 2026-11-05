@@ -15,8 +15,8 @@ import os
 import sys
 import time
 from pathlib import Path
-
-PROXY = os.environ.get("WB_PROXY", "http://127.0.0.1:7897")
+from proxy_detect import detect_proxy  # noqa: E402
+PROXY = os.environ.get("WB_PROXY") or detect_proxy()
 # 枚举条数上限（0=全量）。见 enumerate_videos 的说明：全量枚举在作品多的账号上极慢。
 ENUM_LIMIT = int(os.environ.get("TK_ENUM_LIMIT", "80"))
 GMT8 = dt.timezone(dt.timedelta(hours=8))  # GMT+8 时区

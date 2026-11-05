@@ -18,6 +18,8 @@ pipeline.py — TikTok 对标账号归档顺序器（v2 骨架，对应 v2 §4�
 """
 from __future__ import annotations
 
+import os
+
 import argparse
 import json
 import re
@@ -29,17 +31,20 @@ from pathlib import Path
 
 PIPE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(PIPE_DIR))
+sys.path.insert(0, str(PIPE_DIR / "scripts"))
 from gate import run_gates  # noqa: E402
-
+from proxy_detect import detect_proxy  # noqa: E402
 # ────────────────────────── 配置（按实际环境调整） ──────────────────────────
 CFG = {
-    "python":          r"D:/workbuddy_project/tiktok/pipeline/.venv/Scripts/python.exe",
+    "python":          (str(PIPE_DIR / ".venv" / "Scripts" / "python.exe")
+                        if (PIPE_DIR / ".venv" / "Scripts" / "python.exe").exists()
+                        else sys.executable),
     # 2026-10-02: 按 v1 规格重建的三脚本（原 v1 脚本不在本机）
     "audio_download":  str(PIPE_DIR / "scripts" / "tk_audio_download.py"),
     "scrape":          str(PIPE_DIR / "scripts" / "scrape_tiktok_video.py"),
     "transcribe":      str(PIPE_DIR / "scripts" / "batch_transcribe_fw.py"),
-    "output_root":     r"D:/workbuddy_project/tiktok/pipeline/output",
-    "proxy":           "http://127.0.0.1:7897",
+    "output_root":     str(PIPE_DIR / "output"),
+    "proxy":           os.environ.get("WB_PROXY") or detect_proxy(),
 }
 STATE_FILE = PIPE_DIR / "pipeline_state.json"
 RUN_LOG = PIPE_DIR / "pipeline_run.log"

@@ -17,12 +17,29 @@ from pathlib import Path
 
 WEBAPP_DIR = Path(__file__).resolve().parent
 
-PIPELINE_DIR = Path(os.environ.get("WB_PIPELINE_DIR", r"D:/workbuddy_project/tiktok/pipeline")).resolve()
+PIPELINE_DIR = Path(os.environ.get("WB_PIPELINE_DIR", str(WEBAPP_DIR.parent / "pipeline"))).resolve()
 VENV_PYTHON = Path(os.environ.get("WB_PYTHON", str(PIPELINE_DIR / ".venv" / "Scripts" / "python.exe")))
-WORKBUDDY_HOME = Path(os.environ.get("WB_HOME", r"C:/Users/Administrator/.workbuddy"))
-PROXY = os.environ.get("WB_PROXY", "http://127.0.0.1:7897")
+WORKBUDDY_HOME = Path(os.environ.get("WB_HOME", str(Path.home() / ".workbuddy")))
+def _detect_proxy() -> str:
+    """部署后自动找本机代理：WB_PROXY > 系统代理 > 常见端口 > 7897。
+
+    用户可能用 Clash / 自由猫 / v2rayN 等不同客户端，端口不固定；探测逻辑与
+    pipeline/scripts/proxy_detect.py 是同一份实现，这里复用，避免两份规则漂移。
+    """
+    try:
+        import sys as _sys
+        _scripts = str(WEBAPP_DIR.parent / "pipeline" / "scripts")
+        if _scripts not in _sys.path:
+            _sys.path.insert(0, _scripts)
+        from proxy_detect import detect_proxy
+        return detect_proxy()
+    except Exception:
+        return "http://127.0.0.1:7897"
+
+
+PROXY = os.environ.get("WB_PROXY") or _detect_proxy()
 # 台账表格唯一来源目录（总览面板只读这里）
-LEDGER_DIR = Path(os.environ.get("WB_LEDGER_DIR", r"D:/1/对标账号"))
+LEDGER_DIR = Path(os.environ.get("WB_LEDGER_DIR", str(WEBAPP_DIR.parent / "ledger")))
 # ★ 2026-10-24：修复会话的内部子任务通过这个环境变量把「台账写者租约」下传给子进程树。
 #   daily_batch.py 在子进程里再 POST /api/run，不带令牌就会被修复自己持有的租约挡回
 #   （实测 500 ResourceBusy，一键修复的 collect 项永远起不来）。
@@ -207,12 +224,28 @@ def default_account(name: str, lang: str = "en") -> dict:
 # 原则来自用户口径；实测校准（gylwwcxb/thesymmetrymarket 等 eu 账号实为英文口播，
 # 故 eu 默认仍给 en，需人工确认口播后再改）。region 为空 = 未标注，按 en 兜底。
 REGION_LANG_MAP = {
-    "us": "en", "uk": "en", "eu": "en",
-    "de": "de", "fr": "fr", "es": "es", "it": "it",
-    "cn": "zh", "cn-hk": "zh", "cn-tw": "zh",
-    "jp": "jp", "kr": "kr",
+    # 英语区
+    "us": "en", "uk": "en", "eu": "en", "au": "en", "ca": "en", "nz": "en", "sg": "en",
+    # 欧洲
+    "de": "de", "at": "de", "ch": "de", "fr": "fr", "be": "fr",
+    "es": "es", "mx": "es", "ar": "es", "cl": "es", "co": "es", "pe": "es",
+    "it": "it", "pt": "pt", "br": "pt",
+    "nl": "nl", "pl": "pl", "se": "sv", "no": "no", "dk": "da", "fi": "fi",
+    "ru": "ru", "ua": "uk", "tr": "tr", "gr": "el", "cz": "cs", "ro": "ro",
+    # 中东
+    "sa": "ar", "ae": "ar", "eg": "ar", "il": "he", "ir": "fa",
+    # 南亚 / 东南亚
+    "in": "hi", "pk": "ur", "bd": "bn", "id": "id", "my": "ms", "ph": "tl",
+    "th": "th", "vn": "vi",
+    # 东亚
+    "cn": "zh", "cn-hk": "zh", "cn-tw": "zh", "jp": "jp", "kr": "kr",
 }
-SUPPORTED_LANGS = {"en", "de", "fr", "es", "it", "zh", "jp", "kr"}
+SUPPORTED_LANGS = {
+    "auto",
+    "en", "de", "fr", "es", "it", "pt", "nl", "pl", "sv", "no", "da", "fi",
+    "ru", "uk", "tr", "el", "cs", "ro", "ar", "he", "fa", "hi", "ur", "bn",
+    "id", "ms", "tl", "th", "vi", "zh", "jp", "kr",
+}
 SUPPORTED_REGIONS = set(REGION_LANG_MAP) | {""}
 
 
@@ -251,7 +284,7 @@ def guess_lang(region: str | None, explicit_lang: str | None = None) -> str:
     - 有显式 lang 且合法 → 用显式（最高优先）
     - 无显式 → 按 region 查 REGION_LANG_MAP，缺省 en
     """
-    if explicit_lang and explicit_lang in ("en", "de", "fr", "es", "it", "zh", "jp", "kr"):
+    if explicit_lang and explicit_lang in SUPPORTED_LANGS:
         return explicit_lang
     r = (region or "").strip().lower()
     if r in REGION_LANG_MAP:

@@ -6,14 +6,18 @@
 来源优先级：视频挂车商品链接（products.json，vid 级）> 主页 bio 链接（账号级）。
 幂等：product_links.json 已存在的账号跳过。
 """
+import os
+
 import json
 import re
 import sys
 from pathlib import Path
-
-XLSX = Path(r"D:/1/对标账号/tiktok_对标.xlsx")
-LEDGER_DIR = Path(r"D:/1/对标账号")
-PROXY = "http://127.0.0.1:7897"
+from proxy_detect import detect_proxy  # noqa: E402
+_CFG_P = Path(__file__).resolve().parent.parent / "accounts.json"
+_CFG = json.loads(_CFG_P.read_text(encoding="utf-8")) if _CFG_P.exists() else {}
+XLSX = Path(_CFG.get("xlsx") or "")
+LEDGER_DIR = Path(os.environ.get("WB_LEDGER_DIR") or (XLSX.parent if str(XLSX) else "."))
+PROXY = os.environ.get("WB_PROXY") or detect_proxy()
 
 
 def fetch_bio_link(account: str) -> str:

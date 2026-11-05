@@ -18,12 +18,14 @@ import sys
 import time
 from pathlib import Path
 
-os.environ.setdefault("HTTPS_PROXY", "http://127.0.0.1:7897")
-os.environ.setdefault("HTTP_PROXY", "http://127.0.0.1:7897")
+_proxy = os.environ.get("WB_PROXY") or detect_proxy()
+os.environ.setdefault("HTTPS_PROXY", _proxy)
+os.environ.setdefault("HTTP_PROXY", _proxy)
 
 PIPE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PIPE / "scripts"))
 from tk_audio_download import enumerate_videos  # noqa: E402
+from proxy_detect import detect_proxy  # noqa: E402
 
 VENV = str(PIPE / ".venv" / "Scripts" / "python.exe")
 OUT = PIPE / "output"
@@ -36,7 +38,7 @@ LOG = PIPE / "run_grab.log"
 # 体量小→大
 ORDER = ["charelttce", "greenforu", "mini.cases3", "selsky88", "lifewillcool", "kee.yaden"]
 ENV = {**os.environ,
-       "HTTPS_PROXY": "http://127.0.0.1:7897", "HTTP_PROXY": "http://127.0.0.1:7897"}
+       "HTTPS_PROXY": _proxy, "HTTP_PROXY": _proxy}
 
 
 def log(acc, step, msg):

@@ -98,6 +98,9 @@ def main() -> int:
                          "如 C:\\...\\faster-whisper\\medium-ct2）。缺省时按 --model 名联网拉取。")
     a = ap.parse_args()
     a.lang = {"jp": "ja", "kr": "ko"}.get(a.lang, a.lang)
+    # 2026-11-05：auto / 空 = whisper 自动识别语种；识别结果写 transcripts/_detected_langs.json
+    if str(a.lang or "").strip().lower() in ("", "auto", "none"):
+        a.lang = None
 
     audio_dir = Path(a.audio_dir)
     if not audio_dir.is_dir():
@@ -117,6 +120,7 @@ def main() -> int:
             return 1
     done = state.get("done", {})          # {video_id: {"file":..., "chars":...}}
     suspect = state.get("suspect_hallucination", [])
+    detected: dict = {}
 
     # ★ 同一 video_id 可能存在多种容器格式（mp3/m4a/wav，历史遗留或重复下载）。
     #   必须去重到「唯一 stem」：否则 total（按文件数）永远 > done（按 stem 去重），
@@ -145,11 +149,22 @@ def main() -> int:
         # ── 后端/设备决策 ──
         added = setup_cuda_dll_paths()
         n_gpu = cuda_device_count() if a.device != "cpu" else 0
-        use_cuda = (n_gpu > 0 and a.backend in ("auto", "faster")
-                    and a.device in ("auto", "cuda"))
+        # 2026-11-05：ctranslate2 能看到显卡 ≠ 能跑——缺 cuDNN 时模型加载会直接崩溃
+        # （0xC0000409，不是 Python 异常，兜不住）。用 torch 的 CUDA 可用性二次确认；
+        # 部署默认装的是 CPU 版 torch，这里会正确落到 CPU。
+        use_cuda = False
+        if (n_gpu > 0 and a.backend in ("auto", "faster")
+                and a.device in ("auto", "cuda")):
+            try:
+                import torch
+                use_cuda = bool(torch.cuda.is_available())
+            except Exception:
+                use_cuda = False
         backend = "faster" if (use_cuda or a.backend == "faster") else "openai"
         if a.backend == "auto" and not use_cuda:
-            backend = "openai"   # CPU 走 PyTorch（faster CPU 无速度收益）
+            # 2026-11-05：CPU 上也优先 faster-whisper（int8），避免再拉 PyTorch 的
+            # medium.pt；本机已缓存 CT2 medium 模型。失败时下面的 except 仍会回退 openai。
+            backend = "faster"
         print(f"[info] backend={backend} cuda_devices={n_gpu} "
               f"compute_type={a.gpu_compute_type if use_cuda else a.compute_type} "
               f"vad={a.vad} nvidia_dll_dirs={len(added)}", file=sys.stderr)
@@ -184,6 +199,10 @@ def main() -> int:
                 #   openai CPU（medium.pt 本地缓存），保证 s5 不断链。
                 print(f"[warn] faster 后端初始化失败（{e.__class__.__name__}: "
                       f"{str(e)[:120]}），自动回退 openai CPU 后端", file=sys.stderr)
+                print("[hint] 若是模型下载失败（国内直连 HuggingFace 常见），"
+                      "可设 HF_ENDPOINT=https://hf-mirror.com 后重试，"
+                      "或把 faster-whisper 的 medium-ct2 目录拷到本机并用 --model-dir 指过去",
+                      file=sys.stderr)
                 backend = "openai"
                 import whisper
                 owm = whisper.load_model(a.model, device="cpu")
@@ -197,6 +216,8 @@ def main() -> int:
                     for s in res["segments"]:
                         lines.append(f"[{fmt_ts(s['start'])} -> {fmt_ts(s['end'])}] {s['text'].strip()}")
                         text_all.append(s["text"].strip())
+                    if a.lang is None and res.get("language"):
+                        detected[p.stem] = res["language"]
                     return lines, "".join(text_all), float(res.get("duration") or 0)
             else:
                 def _trans(p):
@@ -207,6 +228,8 @@ def main() -> int:
                     for s in seg_iter:
                         lines.append(f"[{fmt_ts(s.start)} -> {fmt_ts(s.end)}] {s.text.strip()}")
                         text_all.append(s.text.strip())
+                    if a.lang is None and getattr(info, "language", None):
+                        detected[p.stem] = info.language
                     return lines, "".join(text_all), float(info.duration or 0)
         for p in files:
             vid = p.stem  # 约定文件名 {account}_{video_id}.mp3
@@ -233,6 +256,17 @@ def main() -> int:
     else:
         print("[info] 全部已完成，直接出摘要", file=sys.stderr)
 
+    if detected:
+        dp = tr_dir / "_detected_langs.json"
+        prev = {}
+        if dp.exists():
+            try:
+                prev = json.loads(dp.read_text(encoding="utf-8"))
+            except Exception:
+                prev = {}
+        prev.update(detected)
+        dp.write_text(json.dumps(prev, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"[info] 自动识别语种 {len(detected)} 条 -> {dp}", file=sys.stderr)
     summary = {"total": total, "done": list(done.keys()),
                "suspect_hallucination": suspect}
     state.update({"done": done, "suspect_hallucination": suspect})

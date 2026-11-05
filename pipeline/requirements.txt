@@ -25,6 +25,11 @@
 openai-whisper==20250625
 faster-whisper==1.2.1
 ctranslate2==4.6.0
+# 2026-11-05：faster-whisper 1.2.1 仍调用 av.open(..., metadata_errors=...)，
+# 而 av 16+ 删了这个参数（新版会直接 TypeError）。固定在还有该参数的 14.2.0。
+av==14.2.0
+# 2026-11-05：ctranslate2 4.6.0 仍 import pkg_resources；setuptools 81+ 已移除它。
+setuptools<81
 torch==2.7.0+cpu
 yt-dlp==2026.8.19
 curl_cffi==0.16.3

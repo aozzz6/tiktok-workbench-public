@@ -51,8 +51,9 @@ the ledger somewhere else, point `WB_LEDGER_DIR` at that folder instead.
 - Windows, **Python 3.13**.
 - Two virtual environments: `pipeline\.venv` and `webapp\.venv`.
 - `ffmpeg` on `PATH` (audio conversion).
-- For scraping: an HTTP proxy reachable at `http://127.0.0.1:7897`
-  (the scraper talks to TikTok through it).
+- For scraping: an HTTP proxy — auto-detected at runtime (`WB_PROXY` first, then the
+  Windows system proxy, then common local ports such as 7897 / 7892 / 10809). Set
+  `WB_PROXY` to pin a specific one.
 - No `pytest`. Tests are plain scripts that return exit code 0 / 1 — see below.
 
 ## Install
@@ -242,6 +243,22 @@ Two things will not be there, because they are intentionally not in git:
    a "＋ 新增账号" button, if you prefer to create the file from the app.
 2. The Excel ledger itself, in `LEDGER_DIR` (or wherever `WB_LEDGER_DIR` points).
 
+## Account language and region
+
+Every account carries a `lang` and an optional `region` (set in `pipeline/accounts.json`
+or in the dashboard's account form). `lang` decides two things: the language whisper
+transcribes in, and the source language the translator assumes.
+
+- **`lang: "auto"`** — let whisper detect the language per video. The detected code is
+  written to `pipeline/output/<account>_audio/transcripts/_detected_langs.json`, so you can
+  see what it guessed before pinning a language.
+- **`region`** — `config.REGION_LANG_MAP` maps the market to a default language
+  (`us/uk/eu → en`, `de → de`, `br → pt`, `jp → jp`, `kr → kr`, …). An explicit `lang`
+  always wins over the region.
+- Supported today: 33 language codes (en, de, fr, es, it, pt, nl, pl, sv, no, da, fi, ru,
+  uk, tr, el, cs, ro, ar, he, fa, hi, ur, bn, id, ms, tl, th, vi, zh, jp, kr, auto) and 51
+  region keys. Add a pair to `REGION_LANG_MAP` / `SUPPORTED_LANGS` when you need more.
+
 ## Use it on your own machine
 
 This repository is published as a **minimal, working reference**, not as a
@@ -294,7 +311,7 @@ Set them in your shell (or inside `start.bat`) before you start the dashboard.
 | `WB_PYTHON` | the interpreter that runs the pipeline (default: `pipeline\.venv` under `WB_PIPELINE_DIR`) |
 | `WB_HOME` | your WorkBuddy home directory (default: the author's `.workbuddy` folder) |
 | `WB_LEDGER_DIR` | the folder that holds your Excel ledger (default: `D:/1/对标账号`) |
-| `WB_PROXY` | proxy for the **dashboard itself only**; it does not affect scraping (default `http://127.0.0.1:7897`) |
+| `WB_PROXY` | proxy override for the dashboard **and** the scraper; when unset, both auto-detect (system proxy, then common local ports) |
 | `WB_REVERSE_DIR` | the reverse-engineering scratch folder (default: the author's `D:/workbuddy_project/tiktok/reverse`) |
 | `WB_YTDLP` | the `yt-dlp.exe` that view uses (default: the author's WorkBuddy binaries folder) |
 
@@ -326,13 +343,11 @@ carry the author's path; replace them with your own.
 
 ### Scraping needs two things you have to supply
 
-- **A proxy.** It is **hard-coded in each script's `PROXY` constant** —
-  `pipeline/scripts/tiktok_fetch.py:13`,
-  `pipeline/scripts/scrape_tiktok_video.py:34`,
-  `pipeline/scripts/tk_audio_download.py:19` and about a dozen more. There is no
-  `--proxy` flag, so a different port means editing those constants.
-  **`WB_PROXY` does not change scraping**: it is read only by `webapp/config.py`
-  and affects the dashboard itself.
+- **A proxy.** Ports are no longer hard-coded: `pipeline/scripts/proxy_detect.py`
+  resolves one at import time — `WB_PROXY` first, then the Windows system proxy,
+  then a TCP probe of common local ports (7892 自由猫, 7897 Clash, 7890,
+  10809/10808 v2rayN, 1080, …), falling back to `http://127.0.0.1:7897`.
+  Set `WB_PROXY` when the detected proxy is the wrong one.
 - **Your own TikTok session cookie**, saved as `pipeline/cc_cookie.txt`.
 
 **The cookie file must never be committed.** It is a live login. `.gitignore`
@@ -364,7 +379,7 @@ names on this machine all resolve to Store placeholders), and `WB_PW_PYTHON` ove
 When nothing works the step is skipped and the scraper prints
 `[warn] 浏览器兜底未找到可用 Python（…），跳过`; nothing else breaks.
 
-The proxy comes from `WB_PROXY` — never hard-code a port in the fallback scripts.
+The proxy comes from `WB_PROXY` or `proxy_detect.detect_proxy()` — never hard-code a port in the fallback scripts.
 
 ### Starting from the sample account list
 
@@ -387,6 +402,9 @@ Two things about that file:
   `:726`), so a missing key is an immediate `KeyError` at startup.
 ## More reading
 
+- `DEPLOY_QUICKSTART.md` — the 5-step fresh-machine setup (Chinese), plus `first_run.py`:
+  a self-check that verifies interpreters, ffmpeg, proxy, model cache and creates the ledger
+  and `accounts.json` if missing.
 - `DEPLOY_CHECKLIST.md` — **the deploy self-check**: run its one-minute check right after
   installing. It catches most of the traps up front (interpreter, proxy port, ledger location,
   test baselines, the WAF fallback).

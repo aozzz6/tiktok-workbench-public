@@ -173,7 +173,7 @@ def main() -> int:
     print(f"账号 = {a.account}\n产物目录 = {out}\n台账 = {xlsx}")
     # 商品链接：vid 级取 products.json（挂车），账号级回退 product_links.json 的 bio 链接
     links_map, bio_link = {}, ""
-    pl = Path(r"D:/1/对标账号") / a.account / f"{a.account}_products.json"
+    pl = Path(cfg.get("xlsx") or "").parent / a.account / f"{a.account}_products.json"
     if pl.exists():
         try:
             pdata = json.loads(pl.read_text(encoding="utf-8"))
@@ -184,7 +184,7 @@ def main() -> int:
                         links_map[vid] = f"https://shop.tiktok.com/view/product/{pid}"
         except Exception:
             pass
-    plf = Path(r"D:/1/对标账号") / a.account / f"{a.account}_product_links.json"
+    plf = Path(cfg.get("xlsx") or "").parent / a.account / f"{a.account}_product_links.json"
     if plf.exists():
         try:
             ldata = json.loads(plf.read_text(encoding="utf-8"))

@@ -103,7 +103,7 @@ def scan_pending(scope: list[str] | None = None) -> dict:
 
 SYS_PROMPT = (
     "你是 TikTok 带货视频口播文案的翻译员。把每条原文翻译成简体中文，"
-    "源语言可能是英文、西班牙语、意大利语或中文。要求：\n"
+    "源语言可能是任意语种（英语、德语、法语、西语、意语、葡语、阿语、泰语、越南语、印尼语等），按原文判断。要求：\n"
     "1) 译文口语化、自然，贴合带货短视频语境（像主播在推荐产品）；\n"
     "2) 品牌名 / 型号 / 尺码单位保留原文（如 Tilewood、PITO、UK size）；\n"
     "3) 原文是 ASR 转写、常有同音错字或机器腔，请按大意意译，不要逐字硬译；\n"
@@ -124,10 +124,22 @@ def call_llm(model: dict, batch: list[dict]) -> dict:
         ],
         "temperature": 0.3,
     }, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        model["url"].rstrip("/") + "/chat/completions", data=body,
-        headers={"Content-Type": "application/json",
-                 "Authorization": "Bearer " + model["apiKey"]})
+    req_url = model["url"].rstrip("/")
+    if not req_url.endswith("/chat/completions"):
+        # 2026-11-05：models.json 里的 url 是完整端点（如 .../v1/chat/completions），
+        # 旧代码无条件再拼一次，导致 404；这里只在缺路径时补。
+        req_url += "/chat/completions"
+    headers = {"Content-Type": "application/json",
+               "Authorization": "Bearer " + model["apiKey"],
+               # Cloudflare 会拦 Python-urllib 默认 UA（403 error code 1010）
+               "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/124.0.0.0 Safari/537.36")}
+    if "opencode.ai" in req_url:
+        # OpenCode Go 需要会话头，否则返回 400 MissingSessionID
+        import uuid
+        headers["x-opencode-session"] = str(uuid.uuid4())
+    req = urllib.request.Request(req_url, data=body, headers=headers)
     with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
         d = json.loads(r.read().decode("utf-8"))
     txt = d["choices"][0]["message"]["content"]

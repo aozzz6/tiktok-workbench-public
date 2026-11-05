@@ -41,7 +41,8 @@ import receipts  # noqa: E402  回执契约 v2：与 scripts/daily_batch.py 共�
 from gate import run_gates, gate_coverage, gate_sanity  # noqa: E402
 
 CFG_PATH = PIPE_DIR / "accounts.json"
-PY = r"D:/workbuddy_project/tiktok/pipeline/.venv/Scripts/python.exe"
+_VENV_PY = PIPE_DIR / ".venv" / "Scripts" / "python.exe"
+PY = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 STATE_FILE = PIPE_DIR / "pipeline_state.json"
 HOT_MONITOR_COOKIE = PIPE_DIR / "cc_cookie.txt"
 

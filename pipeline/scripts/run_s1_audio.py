@@ -14,9 +14,11 @@ import os
 import subprocess
 import time
 from pathlib import Path
+from proxy_detect import detect_proxy  # noqa: E402
 
-os.environ.setdefault("HTTPS_PROXY", "http://127.0.0.1:7897")
-os.environ.setdefault("HTTP_PROXY", "http://127.0.0.1:7897")
+_proxy = os.environ.get("WB_PROXY") or detect_proxy()
+os.environ.setdefault("HTTPS_PROXY", _proxy)
+os.environ.setdefault("HTTP_PROXY", _proxy)
 PIPE = Path(__file__).resolve().parent.parent
 VENV = str(PIPE / ".venv" / "Scripts" / "python.exe")
 OUT = PIPE / "output"
@@ -24,7 +26,7 @@ SCR = PIPE / "scripts"
 FROM, TO = "2026-07-08", "2026-10-08"
 LOG = PIPE / "run_s1.log"
 ORDER = ["charelttce", "greenforu", "mini.cases3", "selsky88", "lifewillcool", "kee.yaden"]
-ENV = {**os.environ, "HTTPS_PROXY": "http://127.0.0.1:7897", "HTTP_PROXY": "http://127.0.0.1:7897"}
+ENV = {**os.environ, "HTTPS_PROXY": _proxy, "HTTP_PROXY": _proxy}
 
 
 def log(acc, msg):

@@ -15,14 +15,16 @@ video_id」：枚举近期 N 条 → 与 manifest 已知 ID 求差集 = 新增�
 """
 from __future__ import annotations
 
+import os
+
 import argparse
 import datetime as dt
 import json
 import sys
 import time
 from pathlib import Path
-
-PROXY = "http://127.0.0.1:7897"
+from proxy_detect import detect_proxy  # noqa: E402
+PROXY = os.environ.get("WB_PROXY") or detect_proxy()
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 

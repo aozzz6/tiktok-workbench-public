@@ -90,7 +90,7 @@ Pop-Location
 | `WB_PYTHON` | 跑流水线的解释器 | 同上 |
 | `WB_HOME` | 你的 WorkBuddy 用户目录 | 默认指向 `C:\Users\Administrator\.workbuddy`，**AI 配置永远读不到** |
 | `WB_LEDGER_DIR` | 放 Excel 台账的目录 | 默认 `D:/1/对标账号`，台账会被**静默**当成没有 |
-| `WB_PROXY` | 你的本地代理，如 `http://127.0.0.1:7892` | 抓取全走 7897，端口不对就全部失败 |
+| `WB_PROXY` | 你的本地代理，如 `http://127.0.0.1:7892` | 不设时自动探测；设错端口会导致抓取全失败 |
 | `WB_REVERSE_DIR` | 反推的临时目录 | 默认在 `D:` 盘；**没有 D 盘的机器会直接起不来** |
 | `WB_YTDLP` | `yt-dlp.exe` 的完整路径 | 默认是作者的 WorkBuddy 路径 → 反推「链接下载」必失败 |
 | `WB_PW_PYTHON` | 装了 playwright 的解释器（可选） | 不填也行，会自动找；见第 5 节 |
@@ -253,7 +253,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File qa\run-all.ps1
 
 ## 9. 换机器时最容易忘的三件事
 
-1. **代理端口**：脚本全部从 `WB_PROXY` 读，但**你的代理软件自己要真的开在那个端口**。
+1. **代理端口**：脚本从 `WB_PROXY` 或自动探测取，但**你的代理软件自己要真的开在那个端口**。
 2. **两个 venv 都是 Python 3.13**，不是系统默认版本。`py -3` 给的可能是 3.14。
 3. **台账和账号清单不进 git**，必须自己带。`pipeline/accounts.json` 没法用 git 回滚，改之前先复制一份。
 

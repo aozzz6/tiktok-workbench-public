@@ -43,7 +43,7 @@
 - Windows，**Python 3.13**。
 - 两个虚拟环境：`pipeline\.venv` 与 `webapp\.venv`。
 - `ffmpeg` 在 `PATH` 上（音频转码用）。
-- 抓取需要一个 HTTP 代理：`http://127.0.0.1:7897`（抓取脚本通过它访问 TikTok）。
+- 抓取需要一个 HTTP 代理：启动时自动探测（`WB_PROXY` → Windows 系统代理 → 常见本地端口 7897 / 7892 / 10809 等）；要固定某一个就设 `WB_PROXY`。
 - **没有 pytest**。测试是普通脚本，用退出码 0 / 1 表达通过与否 —— 见下文。
 
 ## 安装
@@ -207,6 +207,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File qa\run-all.ps1
    也可以用 `webapp/config.py` 的 `add_account()`，或在界面上点「＋ 新增账号」。
 2. Excel 台账本身，放在 `LEDGER_DIR` 里（或 `WB_LEDGER_DIR` 指过去的那个目录）。
 
+## 账号语言与面向地区
+
+每个账号都有 `lang` 和可选的 `region`（在 `pipeline/accounts.json` 或看板的账号表单里设置）。
+`lang` 决定两件事：whisper 按什么语言转写，以及翻译时假定的源语言。
+
+- **`lang: "auto"`** —— 让 whisper 逐条自动识别语种，结果写在
+  `pipeline/output/<账号>_audio/transcripts/_detected_langs.json`，可以先看它猜的语言，再固化成具体值。
+- **`region`（面向地区）** —— `config.REGION_LANG_MAP` 会按市场给默认语言
+  （`us/uk/eu → en`、`de → de`、`br → pt`、`jp → jp`、`kr → kr` 等）；显式填的 `lang` 永远优先于地区推断。
+- 目前支持 33 个语言代码（en、de、fr、es、it、pt、nl、pl、sv、no、da、fi、ru、uk、tr、el、cs、ro、ar、he、fa、hi、ur、bn、id、ms、tl、th、vi、zh、jp、kr、auto）
+  和 51 个地区键；不够用时在 `REGION_LANG_MAP` / `SUPPORTED_LANGS` 里加一对即可。
+
 ## 在你自己机器上用它
 
 本仓库是按**最小可用版**公开的参考实现，不是开箱即用的产品。它当初只在一台 Windows 机器上
@@ -253,7 +265,7 @@ pipeline\.venv\Scripts\python.exe -m pip install -r pipeline\requirements.txt
 | `WB_PYTHON` | 跑流水线的解释器（缺省是 `WB_PIPELINE_DIR` 下的 `pipeline\.venv`） |
 | `WB_HOME` | 你的 WorkBuddy 用户目录（缺省是作者的 `.workbuddy`） |
 | `WB_LEDGER_DIR` | 放你 Excel 台账的那个目录（缺省 `D:/1/对标账号`） |
-| `WB_PROXY` | 只给**看板自己**用的代理，不影响抓取（缺省 `http://127.0.0.1:7897`） |
+| `WB_PROXY` | 看板和抓取共用的代理覆盖项；不设时两边都自动探测（系统代理 → 常见本地端口） |
 | `WB_REVERSE_DIR` | 逆向分析的临时目录（缺省作者的 `D:/workbuddy_project/tiktok/reverse`） |
 | `WB_YTDLP` | 那个视图用的 `yt-dlp.exe`（缺省作者的 WorkBuddy 二进制目录） |
 
@@ -280,12 +292,10 @@ pipeline\.venv\Scripts\python.exe -m pip install -r pipeline\requirements.txt
 
 ### 抓取要自备两样东西
 
-- **代理。** 它是**写死在各脚本的 `PROXY` 常量里**的 ——
-  `pipeline/scripts/tiktok_fetch.py:13`、
-  `pipeline/scripts/scrape_tiktok_video.py:34`、
-  `pipeline/scripts/tk_audio_download.py:19`，另外还有十余处。脚本没有 `--proxy`
-  参数，换端口就得改这些常量。**`WB_PROXY` 不会改变抓取行为**：只有
-  `webapp/config.py` 读它，它只影响看板自己。
+- **代理。** 现在不再写死端口：`pipeline/scripts/proxy_detect.py` 在启动时解析——
+  先看 `WB_PROXY`，再看 Windows 系统代理，再探测常见本地端口（7892 自由猫、7897 Clash、
+  7890、10809/10808 v2rayN、1080 等），都没有才兜底 `http://127.0.0.1:7897`。
+  探测错了就设 `WB_PROXY`。
 - **你自己的 TikTok 会话 cookie**，存成 `pipeline/cc_cookie.txt`。
 
 **cookie 文件绝不能提交。** 那是一份活的登录态。`.gitignore` 覆盖 cookie 文件，包括
@@ -312,7 +322,7 @@ py -3 -m playwright install chromium
 显式指定。找不到就跳过，抓取脚本会打一行
 `[warn] 浏览器兜底未找到可用 Python（…），跳过`，其余流程不受影响。
 
-代理统一读 `WB_PROXY`——不要在兜底脚本里写死端口。
+代理统一由 `WB_PROXY` 或 `proxy_detect.detect_proxy()` 决定——不要在兜底脚本里写死端口。
 
 ### 从示例账号清单开始
 
@@ -332,6 +342,7 @@ copy pipeline\accounts.example.json pipeline\accounts.json
   `cfg[...]` 硬下标读它们（第 `:288`、`:299`、`:726` 行），缺一个就是启动即 `KeyError`。
 ## 继续读
 
+- `DEPLOY_QUICKSTART.md` — 新机部署 5 步走（含 `first_run.py` 自检脚本）。
 - `DEPLOY_CHECKLIST.md` —— **部署自检清单**：装完先跑它的一分钟自检，能提前挡掉大部分坑
   （解释器、代理端口、台账位置、测试基线、WAF 兜底都在里面）。
 - `DEPLOY_GUIDE.md` —— 把「只有看板」的副本搬到另一台机器。注意它至今仍写端口 8787 和 15 列，
