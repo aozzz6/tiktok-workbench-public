@@ -22,11 +22,44 @@ import time
 import urllib.request
 
 BASE = os.path.dirname(os.path.abspath(__file__))
+PKG_ROOT = os.path.dirname(BASE)
 VENV = os.path.join(BASE, ".venv", "Scripts")
-PY = os.path.join(VENV, "python.exe")
-PYW = os.path.join(VENV, "pythonw.exe")
+VENV_PY = os.path.join(VENV, "python.exe")
+ENV_PY = os.environ.get("WB_PYTHON") or ""
 BOOT = os.path.join(BASE, "_boot.py")
-LOG = os.path.join(BASE, "_server_run.log")
+
+
+def resolve_python(env_py: str, venv_py: str):
+    """(解释器, 找过的候选)：WB_PYTHON 存在就用它，否则回落开发检出里的 venv。"""
+    tried = []
+    if env_py:
+        tried.append(env_py)
+        if os.path.exists(env_py):
+            return env_py, tried
+    if venv_py not in tried:
+        tried.append(venv_py)
+    if os.path.exists(venv_py):
+        return venv_py, tried
+    return None, tried
+
+
+PY, PY_TRIED = resolve_python(ENV_PY, VENV_PY)
+# pythonw 优先 WB_PYTHONW；缺省推导 PY 同目录的 pythonw.exe（包内 python\ 就是这么放的）。
+PYW = os.environ.get("WB_PYTHONW") or os.path.join(
+    os.path.dirname(PY or ENV_PY or VENV_PY), "pythonw.exe")
+# 日志：WB_LOG_DIR 决定目录（没设仍是开发检出的 webapp\）；文件名固定，与 _boot.py 对齐。
+LOG = os.path.join(os.environ.get("WB_LOG_DIR") or BASE, "_server_run.log")
+
+
+def resolve_restart_bat(pkg_root: str, webapp_dir: str) -> str:
+    """包根有 重启工作台.bat 就用它；否则用 webapp 目录里的（开发检出）。"""
+    pkg_bat = os.path.join(pkg_root, "重启工作台.bat")
+    if os.path.exists(pkg_bat):
+        return pkg_bat
+    return os.path.join(webapp_dir, "重启工作台.bat")
+
+
+RESTART_BAT = resolve_restart_bat(PKG_ROOT, BASE)
 # 8787 放最后：本机 D:\skilltext\reporter.js 会常驻抢它（杀完会被 dsh runtime 拉起），
 # 而 8790 是「token余额监控」app.py、8788 是它的 monitor.py —— 都不能当成工作台。
 PORTS = [8789, 8791, 8792, 8793, 8787]
@@ -42,7 +75,6 @@ _DIAG_KEYS = ("pipeline_dir", "ledger_files")
 #   现在 health 带 api_version/features；低于要求就明确提示用真正的重启入口。
 REQUIRED_API_VERSION = 2
 REQUIRED_FEATURES = ("repair", "ai")
-RESTART_BAT = os.path.join(BASE, "重启工作台.bat")
 
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -123,6 +155,55 @@ def probe(port: int) -> str:
     return "free" if _bindable(port) else "foreign"
 
 
+def wants_restart(argv) -> bool:
+    """命令行是否要求重启（--restart）。"""
+    return "--restart" in list(argv)
+
+
+def listener_pid(port: int):
+    """监听在该端口的进程 pid；读不到就返回 None。只按端口取，不按进程名扫。"""
+    try:
+        proc = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in (proc.stdout or "").splitlines():
+        parts = line.split()
+        if (len(parts) >= 5 and parts[0].upper() == "TCP"
+                and parts[1].endswith(":" + str(port)) and parts[-1].isdigit()):
+            return int(parts[-1])
+    return None
+
+
+def restart_plan(port: int, state: str, pid) -> dict:
+    """纯函数：--restart 在这个端口上该不该杀、杀谁。
+
+    state 是 probe() 的三态。只有"本工作台"且拿得到监听 pid 才产生 kill；
+    命令里只有一个 pid，绝不按进程名批量杀。
+    """
+    if state != "workbench" or not pid:
+        return {"port": port, "kill": False, "pid": None, "command": None}
+    return {
+        "port": port,
+        "kill": True,
+        "pid": int(pid),
+        "command": ["taskkill", "/PID", str(int(pid)), "/T", "/F"],
+    }
+
+
+def wait_released(port: int, timeout: float = 15.0) -> bool:
+    """等端口不再被监听；超时返回 False。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _listening(port):
+            return True
+        time.sleep(0.3)
+    return not _listening(port)
+
+
 def spawn(port: int) -> subprocess.Popen:
     exe = PYW if os.path.exists(PYW) else PY
     DETACHED_PROCESS = 0x00000008
@@ -166,10 +247,30 @@ def tail_log(lines: int = 15) -> str:
         return "(读不到日志)"
 
 
-def main() -> int:
-    if not os.path.exists(PY):
-        print(f"[ERROR] 找不到 venv python：{PY}")
+def main(argv=None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    py, tried = resolve_python(ENV_PY, VENV_PY)
+    if not py:
+        print("[ERROR] 找不到 Python 解释器，找过：")
+        for path in tried:
+            print(f"  {path}")
         return 1
+
+    if wants_restart(args):
+        for port in PORTS:
+            if probe(port) != "workbench":
+                continue
+            pid = listener_pid(port)
+            plan = restart_plan(port, "workbench", pid)
+            if not plan["kill"]:
+                print(f"[launcher] 在 {port} 找到工作台，但拿不到可杀的监听 pid；请手动结束。")
+                return 2
+            print(f"[launcher] 重启：结束 {port} 上的工作台进程（pid {pid}）")
+            subprocess.run(plan["command"], capture_output=True)
+            if not wait_released(port):
+                print(f"[launcher] 端口 {port} 没能释放（pid {pid} 仍在监听）。")
+                return 2
+            break
 
     states = [(port, probe(port)) for port in PORTS]
 
