@@ -191,6 +191,20 @@ def run_build(out: Path, home: Path, ffbin: Path, vc: Path, *,
     if skip_deps:
         cmd += ["--skip-deps"]
     cmd += list(extra)
+    env = child_env()
+    return subprocess.run(cmd, cwd=str(REPO), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=timeout,
+                          env=env)
+
+
+def child_env() -> dict:
+    """Environment for a child that we decode as UTF-8.
+
+    The console here is GBK; without an explicit PYTHONIOENCODING the build
+    script writes GBK bytes that this file would then decode as UTF-8 with
+    errors="replace" - the Chinese assertions then fail for no real reason
+    (QA hit exactly this).  Never depend on the console code page.
+    """
     env = dict(os.environ)
     env.pop("WB_FFMPEG_DIR", None)          # 断言 --ffmpeg-dir 真的被用上
     # 模型缓存的四级回退（契约 §1）必须清干净，否则"缺 --hf-cache"这一支
@@ -198,22 +212,17 @@ def run_build(out: Path, home: Path, ffbin: Path, vc: Path, *,
     for name in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "HF_HOME",
                  "XDG_CACHE_HOME", "HF_HUB_OFFLINE"):
         env.pop(name, None)
-    return subprocess.run(cmd, cwd=str(REPO), capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=timeout,
-                          env=env)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    return env
 
 
 def run_raw(args, timeout: int = 900):
     """裸跑构建脚本（自己给全套参数），用于 --out 范围与 marker 的拒绝分支。"""
-    env = dict(os.environ)
-    env.pop("WB_FFMPEG_DIR", None)
-    for name in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "HF_HOME",
-                 "XDG_CACHE_HOME", "HF_HUB_OFFLINE"):
-        env.pop(name, None)
     return subprocess.run([sys.executable, str(BUILDER)] + [str(a) for a in args],
                           cwd=str(REPO), capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=timeout,
-                          env=env)
+                          env=child_env())
 
 
 def rel_files(stage: Path):
@@ -376,6 +385,33 @@ try:
             shutil.rmtree(tmp2, ignore_errors=True)
     check("(c1) 顶层 README.md/data/tests 排除；static/sub 下的同名文件与 data 目录保留",
           _deep_names_kept)
+
+    def _nested_pycache_dropped():
+        tmp2 = new_tmp()
+        try:
+            psrc = tmp2 / "pipeline"
+            write(psrc / "pipeline.py", "print(1)\n")
+            write(psrc / "scripts" / "ok.py", "x = 1\n")
+            write(psrc / "scripts" / "__pycache__" / "x.cpython-313.pyc", b"\x00pyc")
+            write(psrc / "scripts" / "deeper" / "__pycache__" / "y.pyc", b"\x00pyc")
+            pdst = tmp2 / "pdst"
+            bp.copy_pipeline(psrc, pdst)
+            pgot = sorted(p.relative_to(pdst).as_posix() for p in pdst.rglob("*") if p.is_file())
+            assert_(pgot == ["pipeline.py", "scripts/ok.py"],
+                    f"pipeline 任意层级的 __pycache__ 都必须排除，实际：{pgot}")
+            wsrc = tmp2 / "webapp"
+            write(wsrc / "app.py", "print(1)\n")
+            write(wsrc / "static" / "a.js", "1\n")
+            write(wsrc / "static" / "__pycache__" / "b.pyc", b"\x00pyc")
+            wdst = tmp2 / "wdst"
+            bp.copy_webapp(wsrc, wdst)
+            wgot = sorted(p.relative_to(wdst).as_posix() for p in wdst.rglob("*") if p.is_file())
+            assert_(wgot == ["app.py", "static/a.js"],
+                    f"webapp 任意层级的 __pycache__ 都必须排除，实际：{wgot}")
+        finally:
+            shutil.rmtree(tmp2, ignore_errors=True)
+    check("(c1b) pipeline\\scripts\\__pycache__（含更深一层）与 webapp 的 __pycache__ 都不进包",
+          _nested_pycache_dropped)
 
     def _real_static_kept():
         repo_file = REPO / "webapp" / "static" / "prompt_v2" / "README.md"
