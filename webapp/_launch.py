@@ -64,6 +64,9 @@ RESTART_BAT = resolve_restart_bat(PKG_ROOT, BASE)
 # 而 8790 是「token余额监控」app.py、8788 是它的 monitor.py —— 都不能当成工作台。
 PORTS = [8789, 8791, 8792, 8793, 8787]
 READY_TIMEOUT = 45.0
+# 等就绪时的轮询间隔。0.6s 会让冷启动最坏白等 0.6 秒（M1 要求双击到 ready ≤5 秒）；
+# health 请求本身只有毫秒级开销，0.15s 足够便宜。
+READY_POLL = 0.15
 
 # 工作台 health 的指纹：ok + ts + diagnostics(pipeline_dir/ledger_files)。
 # 只认 "ok": true 会把 token余额监控（返回 db/upstream + ok）当成工作台。
@@ -168,8 +171,29 @@ def probe(port: int) -> str:
 
 
 def wants_restart(argv) -> bool:
-    """命令行是否要求重启（--restart）。"""
-    return "--restart" in list(argv)
+    """命令行是否要求重启（--restart [PORT]）。"""
+    return restart_target(argv)[0]
+
+
+def restart_target(argv):
+    """解析 `--restart [PORT]`：返回 (是否重启, 端口或 None)。
+
+    `--restart 8792` / `--restart=8792` → (True, 8792)；`--restart` → (True, None)。
+    端口不是数字时按"不带端口"处理（照旧扫描候选）。
+    """
+    args = list(argv)
+    for index, token in enumerate(args):
+        token = str(token)
+        if token == "--restart":
+            if index + 1 < len(args):
+                nxt = str(args[index + 1])
+                if nxt.isdigit():
+                    return True, int(nxt)
+            return True, None
+        if token.startswith("--restart="):
+            value = token.split("=", 1)[1]
+            return True, int(value) if value.isdigit() else None
+    return False, None
 
 
 def listener_pid(port: int):
@@ -234,13 +258,15 @@ def spawn(port: int) -> subprocess.Popen:
 def wait_ready(port: int, proc) -> bool:
     deadline = time.time() + READY_TIMEOUT
     while time.time() < deadline:
-        if health(port):
+        # 端口还没被服务绑上时先别发 HTTP：某些 Windows 配置下 connect 一个未监听端口
+        # 会一直阻塞到超时（本机 health() 实测白等 2.04s），而 _bindable() 是毫秒级。
+        if not _bindable(port) and health(port):
             return True
-        if proc.poll() is not None and not health(port):
+        if proc.poll() is not None:
             # 进程退了：再给它 1 秒落日志，然后判失败
             time.sleep(1.0)
-            return health(port) is not None
-        time.sleep(0.6)
+            return False if _bindable(port) else health(port) is not None
+        time.sleep(READY_POLL)
     return False
 
 
@@ -259,6 +285,46 @@ def tail_log(lines: int = 15) -> str:
         return "(读不到日志)"
 
 
+def _start_on_port(port: int) -> int:
+    """在指定端口拉起服务、等就绪、开浏览器。0 成功，1 失败。"""
+    url = f"http://127.0.0.1:{port}/"
+    print(f"[launcher] 在 {port} 启动工作台 ...")
+    proc = spawn(port)
+    if wait_ready(port, proc):
+        print(f"[launcher] 就绪：{url}")
+        open_page(url)
+        return 0
+    print(f"[launcher] 端口 {port} 启动失败（pid {proc.pid}，exit={proc.poll()}）")
+    print("[launcher] 日志末尾：")
+    print(tail_log())
+    return 1
+
+
+def _restart_on_port(port: int) -> int:
+    """`--restart <PORT>`：只处理这一个端口，且重启必须回到这个端口（契约 §5.6）。
+
+    - 本工作台 → 杀该端口的监听 pid（只这一个）、等释放、**在这个端口**重新启动；
+    - 别人的程序 → 一律不杀，退出 2；
+    - 空闲 → 直接在这个端口启动。
+    """
+    state = probe(port)
+    if state == "foreign":
+        print(f"[launcher] 端口 {port} 被别的程序占用，未做任何操作。")
+        return 2
+    if state == "workbench":
+        pid = listener_pid(port)
+        plan = restart_plan(port, "workbench", pid)
+        if not plan["kill"]:
+            print(f"[launcher] 在 {port} 找到工作台，但拿不到可杀的监听 pid；请手动结束。")
+            return 2
+        print(f"[launcher] 重启：结束 {port} 上的工作台进程（pid {pid}）")
+        subprocess.run(plan["command"], capture_output=True)
+        if not wait_released(port):
+            print(f"[launcher] 端口 {port} 没能释放（pid {pid} 仍在监听）。")
+            return 2
+    return _start_on_port(port)
+
+
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     py, tried = resolve_python(ENV_PY, VENV_PY)
@@ -268,7 +334,13 @@ def main(argv=None) -> int:
             print(f"  {path}")
         return 1
 
-    if wants_restart(args):
+    is_restart, restart_port = restart_target(args)
+    if is_restart and restart_port is not None:
+        # 带端口：只碰这一个端口，重启回到这个端口。
+        return _restart_on_port(restart_port)
+
+    if is_restart:
+        # 不带端口：保持既有行为（扫描候选，命中本工作台就重启，都没有就照常启动）。
         for port in PORTS:
             if probe(port) != "workbench":
                 continue
@@ -303,16 +375,8 @@ def main(argv=None) -> int:
         if state != "free":
             print(f"[launcher] 端口 {port} 被别的程序占用，跳过")
             continue
-        url = f"http://127.0.0.1:{port}/"
-        print(f"[launcher] 在 {port} 启动工作台 ...")
-        proc = spawn(port)
-        if wait_ready(port, proc):
-            print(f"[launcher] 就绪：{url}")
-            open_page(url)
+        if _start_on_port(port) == 0:
             return 0
-        print(f"[launcher] 端口 {port} 启动失败（pid {proc.pid}，exit={proc.poll()}）")
-        print("[launcher] 日志末尾：")
-        print(tail_log())
 
     print("[launcher] 全部候选端口（" + ", ".join(map(str, PORTS)) + "）都不可用。")
     print("[launcher] 排查：netstat -ano | findstr :8787  看占用 pid，再 tasklist /FI \"PID eq <pid>\"")

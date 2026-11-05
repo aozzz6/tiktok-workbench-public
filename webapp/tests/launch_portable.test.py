@@ -410,5 +410,201 @@ def _probe_foreign_http():
 check("HTTP 返回但不是本工作台指纹（缺 diagnostics）→ foreign", _probe_foreign_http)
 
 
+# ── 9. wait_ready 轮询间隔（冷启动 5 秒预算） ──────────────────────
+print("[9] wait_ready：轮询间隔 ≤0.2s（冷启动时最坏不能白等 0.6s）")
+
+
+def _wait_ready_polls_fast():
+    mod = load_with({})
+    stamps = []
+
+    def fake_health(port, timeout=2.5):
+        stamps.append(time.perf_counter())
+        return None
+
+    class FakeProc:
+        def poll(self):
+            return None
+
+    mod.health = fake_health
+    mod._bindable = lambda p: False      # 模拟"服务已绑上端口"，health 才会被调用
+    mod.READY_TIMEOUT = 1.0          # 只跑 1 秒，别等满 45 秒
+    ok = mod.wait_ready(8789, FakeProc())
+    assert_(ok is False, f"一直没 ready 时应返回 False，实得 {ok!r}")
+    gaps = [stamps[i + 1] - stamps[i] for i in range(len(stamps) - 1)]
+    worst = max(gaps) if gaps else 99.0
+    assert_(worst <= 0.2,
+            f"wait_ready 轮询间隔 {worst:.2f}s > 0.2s（每次最坏白等这么久，冷启动 5 秒预算吃不住）")
+    assert_(len(stamps) >= 3, f"1 秒内只轮询了 {len(stamps)} 次（间隔过大）")
+
+
+check("wait_ready 轮询间隔 ≤ 0.2 秒", _wait_ready_polls_fast)
+
+
+def _wait_ready_skips_health_while_port_free():
+    """端口还没被服务绑上时，不许发 HTTP：某些 Windows 配置下 connect 未监听端口
+    会阻塞到超时（本机实测 health() 白等 2.04s），而 _bindable() 是毫秒级。"""
+    mod = load_with({})
+    calls = []
+    mod._bindable = lambda p: True                  # 端口仍空闲
+    mod.health = lambda p, timeout=2.5: (calls.append(p), None)[1]
+    mod.READY_TIMEOUT = 0.5
+    mod.READY_POLL = 0.05
+
+    class FakeProc:
+        def poll(self):
+            return None
+
+    t0 = time.perf_counter()
+    ok = mod.wait_ready(8789, FakeProc())
+    elapsed = time.perf_counter() - t0
+    assert_(ok is False, f"一直没 ready 时应返回 False，实得 {ok!r}")
+    assert_(calls == [], f"端口还空着时不应发 health（会阻塞），实得要把 {calls!r}")
+    assert_(elapsed < 0.9, f"0.5s 窗口实际用了 {elapsed:.2f}s（说明有阻塞调用）")
+
+
+check("wait_ready 在端口空闲时不发 HTTP（避免 connect 阻塞）", _wait_ready_skips_health_while_port_free)
+
+
+# ── 10. --restart [PORT]：带端口必须回到那个端口 ───────────────────
+print("[10] --restart [PORT]：带端口回原端口；foreign 不杀；不带端口行为不变")
+
+
+def _restart_target_parse():
+    mod = load_with({})
+    assert_(mod.restart_target(["--restart", "8792"]) == (True, 8792),
+            f"带端口解析错：{mod.restart_target(['--restart', '8792'])!r}")
+    assert_(mod.restart_target(["--restart=8792"]) == (True, 8792),
+            "--restart=8792 也要认")
+    assert_(mod.restart_target(["--restart"]) == (True, None), "不带端口应为 (True, None)")
+    assert_(mod.restart_target([]) == (False, None), "不是 restart 应为 (False, None)")
+    assert_(mod.restart_target(["--restart", "abc"]) == (True, None), "端口不是数字时按不带端口处理")
+
+
+check("restart_target：--restart [PORT] / --restart=PORT 解析", _restart_target_parse)
+
+
+def _restart_port_plan():
+    mod = load_with({})
+    is_restart, port = mod.restart_target(["--restart", "8792"])
+    assert_(is_restart is True and port == 8792, f"target={(is_restart, port)!r}")
+    plan = mod.restart_plan(port, "workbench", 4321)
+    assert_(plan["port"] == 8792, f"plan.port={plan['port']!r}（必须是 8792）")
+    assert_(plan["kill"] is True, f"plan={plan!r}")
+    assert_(plan["pid"] == 4321, f"plan.pid={plan['pid']!r}")
+    pids = [t for t in plan["command"] if str(t).isdigit()]
+    assert_(pids == ["4321"], f"命令里应恰好一个 pid 4321：{plan['command']!r}")
+    foreign = mod.restart_plan(8792, "foreign", 4321)
+    assert_(foreign["kill"] is False and foreign["command"] is None,
+            f"foreign 不许杀：{foreign!r}")
+
+
+check("--restart 8792 + 本工作台 → kill 的是 8792 的监听 pid、端口 8792", _restart_port_plan)
+
+
+def _restart_port_workbench_restarts_there():
+    mod = load_with({})
+    spawned, commands = [], []
+
+    class FakeProc:
+        pid = 1
+
+        def poll(self):
+            return None
+
+    mod.probe = lambda p: "workbench" if p == 8792 else "free"
+    mod.listener_pid = lambda p: 4321 if p == 8792 else None
+    mod.subprocess.run = lambda *a, **k: commands.append(a[0] if a else k)
+    mod.wait_released = lambda p, timeout=15.0: True
+    mod.spawn = lambda p: (spawned.append(p), FakeProc())[1]
+    mod.wait_ready = lambda p, proc: True
+    mod.open_page = lambda url: None
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = mod.main(["--restart", "8792"])
+    out = buf.getvalue()
+    assert_(rc == 0, f"rc={rc}；输出：{out!r}")
+    assert_(spawned == [8792], f"必须在 8792 重启，实得 spawn={spawned!r}")
+    assert_(commands, "应调用一次 taskkill")
+    cmd = commands[-1]
+    pids = [t for t in cmd if str(t).isdigit()]
+    assert_(pids == ["4321"], f"只许杀监听 pid 4321，实得 {pids!r}（cmd={cmd!r}）")
+    assert_("8792" in out, f"输出里应出现 8792：{out!r}")
+
+
+check("--restart 8792 + 本工作台 → 杀掉 8792 的 pid 并起在 8792", _restart_port_workbench_restarts_there)
+
+
+def _restart_port_foreign_exit2():
+    mod = load_with({})
+    spawned, commands = [], []
+    mod.probe = lambda p: "foreign" if p == 8792 else "free"
+    mod.subprocess.run = lambda *a, **k: commands.append(a)
+    mod.spawn = lambda p: (spawned.append(p), None)[1]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = mod.main(["--restart", "8792"])
+    out = buf.getvalue()
+    assert_(rc == 2, f"foreign 应退出 2，实得 rc={rc}；输出：{out!r}")
+    assert_(spawned == [], f"foreign 不许启动，实得 spawn={spawned!r}")
+    assert_(commands == [], f"foreign 不许杀任何进程，实得 {commands!r}")
+    assert_("8792" in out and "别的程序" in out, f"输出应说明端口被别的程序占用：{out!r}")
+
+
+check("--restart 8792 + foreign → 不杀、不起、退出 2", _restart_port_foreign_exit2)
+
+
+def _restart_port_free_starts_there():
+    mod = load_with({})
+    spawned = []
+
+    class FakeProc:
+        pid = 1
+
+        def poll(self):
+            return None
+
+    mod.probe = lambda p: "free"
+    mod.spawn = lambda p: (spawned.append(p), FakeProc())[1]
+    mod.wait_ready = lambda p, proc: True
+    mod.open_page = lambda url: None
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = mod.main(["--restart", "8792"])
+    out = buf.getvalue()
+    assert_(rc == 0, f"rc={rc}；输出：{out!r}")
+    assert_(spawned == [8792], f"空端口应起在 8792，实得 {spawned!r}")
+    assert_("8792" in out, f"输出里应出现 8792：{out!r}")
+
+
+check("--restart 8792 + 空闲 → 起在 8792", _restart_port_free_starts_there)
+
+
+def _restart_no_port_unchanged():
+    mod = load_with({})
+    spawned = []
+
+    class FakeProc:
+        pid = 1
+
+        def poll(self):
+            return None
+
+    # 没有任何实例：照常启动，退出 0
+    mod.probe = lambda p: "free"
+    mod.spawn = lambda p: (spawned.append(p), FakeProc())[1]
+    mod.wait_ready = lambda p, proc: True
+    mod.open_page = lambda url: None
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = mod.main(["--restart"])
+    out = buf.getvalue()
+    assert_(rc == 0, f"无实例时应照常启动并退出 0，rc={rc}；输出：{out!r}")
+    assert_(spawned == [mod.PORTS[0]], f"应扫描候选起在 {mod.PORTS[0]}，实得 {spawned!r}")
+
+
+check("不带端口的 --restart：无实例时照常启动（行为不变）", _restart_no_port_unchanged)
+
+
 print(f"\n通过 {_ok} / {_ok + _fail}")
 sys.exit(0 if _fail == 0 else 1)
