@@ -64,3 +64,7 @@ _shots_*/
 # ── 逆向素材：按视频 ID 建的目录 + 上传区（媒体，420MB 级） ──
 reverse/[0-9]*/
 reverse/_uploads/
+
+# ── 构建产物（T-15 / T-22）：便携包 stage 与 dist 里的 ZIP，一律不进版本库 ──
+build/
+dist/

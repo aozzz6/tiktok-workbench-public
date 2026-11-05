@@ -1,0 +1,10 @@
+# T-15 · pipeline 依赖（便携包用）：与 requirements.txt 同一批 pin，
+# 去掉 --extra-index-url、torch 与 openai-whisper（ADR-0002：包里不带 PyTorch）。
+# 只在构建期被 packaging\build_portable.py 读取；开发者的 requirements.txt 一行不动。
+faster-whisper==1.2.1
+ctranslate2==4.6.0
+av==14.2.0
+setuptools<81
+yt-dlp==2026.8.19
+curl_cffi==0.16.3
+openpyxl==3.1.5
