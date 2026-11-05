@@ -4,20 +4,33 @@
 
 做什么
 ------
-1. 检查 Python / 两个虚拟环境 / ffmpeg / 代理 / TikTok 连通性 / whisper 模型缓存
+1. 检查 Python / 两个虚拟环境（仅开发检出） / ffmpeg / 代理 / TikTok 连通性 / whisper 模型缓存
 2. 缺什么就建什么（只创建、不覆盖）：
    - 台账目录（默认 <仓库>/ledger，可用 WB_LEDGER_DIR 覆盖）
    - 台账模板 tiktok_对标.xlsx（14 列表头 + 「对标记录-模板」+「说明」）
    - pipeline/accounts.json（从 accounts.example.json 生成，xlsx 指向上面那份台账）
-   - pipeline/reports 目录
+   - pipeline/output、pipeline/reports、webapp/data 目录
 3. 打印还缺哪些人工步骤（TikTok cookie、账号、代理端口）
+
+两种运行形态
+------------
+* **开发检出**（不带 `--portable`）：行为与本作业之前一致 —— 查两个 venv，缺了就 `[FAIL]`。
+* **便携包**（`--portable`，2026-11-05 T-17 新增）：包里没有 venv，所以只打印
+  `[ OK ] 包内解释器：…`；`[FAIL]` 只允许三类（台账无法创建 / `accounts.json`
+  无法生成或解析 / 包内目录不可写），其余（ffmpeg、模型、代理、TikTok）一律 `[WARN]`。
+  契约见 `docs/design/api/launcher-runtime.md` §3。
+* **每次启动的快路径**（`--portable --init-only`）：**不检查、不联网、只补缺失文件**，
+  单次 < 2 秒；失败不阻断启动，写进 `logs\\first-run.log` 并继续（退出码仍 0）。
 
 用法
 ----
-    python first_run.py                 # 自检 + 自动补齐能补的
-    python first_run.py --dry-run       # 只看结论，不写任何文件
+    python first_run.py                          # 自检 + 自动补齐能补的（开发检出）
+    python first_run.py --dry-run                # 只看结论，不写任何文件
     python first_run.py --ledger-dir D:/data/ledger
-    python first_run.py --no-network    # 跳过 TikTok 连通性测试（离线时用）
+    python first_run.py --pipeline-dir D:/pkg/pipeline
+    python first_run.py --no-network             # 跳过 TikTok 连通性测试（离线时用）
+    python first_run.py --portable               # 便携包：检查环境（检查环境.bat 用它 + --no-network）
+    python first_run.py --portable --init-only   # 便携包：每次启动都跑，只补缺失文件
 
 推荐用 webapp 的 python 跑（有 openpyxl，才能建台账）：
     webapp\\.venv\\Scripts\\python.exe first_run.py
@@ -35,16 +48,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 PIPE = ROOT / "pipeline"
 WEBAPP = ROOT / "webapp"
-SCRIPTS = PIPE / "scripts"
 
 OK, WARN, FAIL = "[ OK ]", "[WARN]", "[FAIL]"
+
+# 表头必须与 webapp\config.py 的 EXPECTED_COLS 逐字一致（T-17 的用例守着这条；
+# 这里不 import config：那条路会做代理探测与 mkdir，`--init-only` 的 < 2 秒预算不能花在它上面）。
+COLS = ["记录日期", "对标账号", "视频发布时间", "视频标题", "话题标签",
+        "视频链接/ID", "商品链接", "播放量", "点赞数", "评论数",
+        "转发数", "收藏数", "音频", "翻译"]
+WIDTHS = [14, 14, 18, 42, 30, 38, 32, 10, 10, 10, 10, 10, 40, 40]
 
 
 def _line(flag: str, text: str) -> None:
     print(f"{flag} {text}")
 
 
-def check_python() -> bool:
+# ────────────────────────── 检查 ──────────────────────────
+def check_python(portable: bool = False) -> bool:
     major, minor = sys.version_info[:2]
     if (major, minor) >= (3, 13):
         _line(OK, f"Python {major}.{minor}（仓库按 3.13 验证）")
@@ -52,8 +72,14 @@ def check_python() -> bool:
     if (major, minor) >= (3, 11):
         _line(WARN, f"Python {major}.{minor}：仓库按 3.13 验证，能跑但未验证")
         return True
-    _line(FAIL, f"Python {major}.{minor} 太旧，需要 3.11+（推荐 3.13）")
+    _line(WARN if portable else FAIL, f"Python {major}.{minor} 太旧，需要 3.11+（推荐 3.13）")
     return False
+
+
+def check_package_python() -> None:
+    """便携包的解释器：包内自带，没有 venv 可查，只如实打印它。"""
+    ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    _line(OK, f"包内解释器：{sys.executable}（Python {ver}）")
 
 
 def check_venv(name: str, path: Path, create_hint: str) -> bool:
@@ -75,9 +101,11 @@ def check_ffmpeg() -> bool:
     return False
 
 
-def detect_proxy() -> str:
+def detect_proxy(scripts: Path | None = None) -> str:
+    scripts = scripts or (PIPE / "scripts")
     try:
-        sys.path.insert(0, str(SCRIPTS))
+        if str(scripts) not in sys.path:
+            sys.path.insert(0, str(scripts))
         from proxy_detect import detect_proxy as _dp
 
         return _dp(force=True)
@@ -86,9 +114,10 @@ def detect_proxy() -> str:
         return ""
 
 
-def check_proxy(proxy: str) -> bool:
+def check_proxy(proxy: str, portable: bool = False) -> bool:
     if not proxy:
-        _line(FAIL, "没探测到本机代理（抓取 TikTok 需要）")
+        _line(WARN if portable else FAIL,
+              "没探测到本机代理（抓取 TikTok 需要；只看看板/转写可以不管）")
         return False
     from urllib.parse import urlsplit
 
@@ -145,28 +174,91 @@ def check_tiktok(proxy: str, timeout: int = 20) -> bool:
         return False
 
 
+def hf_hub_dirs() -> list[Path]:
+    """按 huggingface_hub 的优先级列出「hub 缓存目录」候选（T-17 DoD 4）。
+
+    优先级与 `launcher-runtime.md` §2 一致：`HF_HUB_CACHE` > `HF_HOME\\hub`
+    > `XDG_CACHE_HOME\\huggingface\\hub` > `~/.cache/huggingface/hub`。
+    另外把 `HF_HOME` / `XDG_CACHE_HOME\\huggingface` 本身也当候选（有人直接把
+    HF_HOME 指到缓存根而不是 `<根>\\hub`）。
+    """
+    out: list[Path] = []
+
+    def add(p) -> None:
+        if not p:
+            return
+        pp = Path(p)
+        if pp not in out:
+            out.append(pp)
+
+    hub_cache = os.environ.get("HF_HUB_CACHE")
+    if hub_cache:
+        add(hub_cache)
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home:
+        add(Path(hf_home) / "hub")
+        add(hf_home)
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    if xdg:
+        add(Path(xdg) / "huggingface" / "hub")
+        add(Path(xdg) / "huggingface")
+    add(Path.home() / ".cache" / "huggingface" / "hub")
+    return out
+
+
+def find_cached_models() -> list[tuple[Path, Path | None]]:
+    """返回 [(模型目录, 快照里的 model.bin 或 None)]；不 import huggingface_hub。"""
+    hits: list[tuple[Path, Path | None]] = []
+    seen: set[Path] = set()
+    for hub in hf_hub_dirs():
+        try:
+            if not hub.is_dir():
+                continue
+            dirs = sorted(hub.glob("models--Systran--faster-whisper-*"))
+        except OSError:
+            continue
+        for d in dirs:
+            if not d.is_dir() or d in seen:
+                continue
+            try:
+                bins = sorted(d.glob("snapshots/*/model.bin"))
+            except OSError:
+                bins = []
+            seen.add(d)
+            hits.append((d, bins[0] if bins else None))
+    return hits
+
+
 def check_model() -> bool:
-    hub = Path.home() / ".cache" / "huggingface" / "hub"
-    hits = list(hub.glob("models--Systran--faster-whisper-*")) if hub.exists() else []
-    if hits:
-        for h in hits:
-            size = sum(p.stat().st_size for p in h.rglob("*") if p.is_file())
-            _line(OK, f"whisper 模型已缓存：{h.name}（{size / 1024 / 1024:.0f} MB）")
+    hits = find_cached_models()
+    ready = [(d, b) for d, b in hits if b is not None]
+    if ready:
+        for d, b in ready:
+            try:
+                size = sum(p.stat().st_size for p in d.rglob("*") if p.is_file())
+                size_text = f"{size / 1024 / 1024:.0f} MB"
+            except OSError:
+                size_text = "大小未知"
+            _line(OK, f"whisper 模型已缓存：{d.name}（{size_text}）")
         return True
-    _line(WARN, "没找到 faster-whisper 模型缓存：首次转写需要下载（约 1.5 GB）")
+    searched = "；".join(str(p) for p in hf_hub_dirs())
+    _line(WARN, f"没找到 faster-whisper 模型缓存（找过：{searched}）：首次转写需要下载（约 1.5 GB）")
     print("       国内直连 HuggingFace 常失败，先设 HF_ENDPOINT=https://hf-mirror.com")
     print("       或把 medium-ct2 模型目录拷过来，用 --model-dir 指定")
     return False
 
 
-def read_accounts() -> dict:
-    p = PIPE / "accounts.json"
-    if not p.exists():
-        return {}
+# ────────────────────────── 初始化（只创建缺失，绝不覆盖） ──────────────────────────
+def read_accounts(pipe: Path) -> tuple[dict, str | None]:
+    """读 accounts.json：不存在 → ({}, None)；坏了 → ({}, 错误文本)。"""
+    p = pipe / "accounts.json"
+    if not p.is_file():
+        return {}, None
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return {}
+        v = json.loads(p.read_text(encoding="utf-8"))
+        return (v if isinstance(v, dict) else {}), None
+    except Exception as exc:  # noqa: BLE001
+        return {}, f"{exc.__class__.__name__}: {exc}"
 
 
 def find_ledger(accounts: dict, ledger_dir: Path) -> Path | None:
@@ -175,149 +267,270 @@ def find_ledger(accounts: dict, ledger_dir: Path) -> Path | None:
         configured = Path(raw)
         if configured.is_file():
             return configured
-    if ledger_dir.exists():
+    if ledger_dir.is_dir():
         files = sorted(ledger_dir.glob("*.xlsx"))
         if files:
             return files[0]
     return None
 
 
-COLS = ["记录日期", "对标账号", "视频发布时间", "视频标题", "话题标签",
-        "视频链接/ID", "商品链接", "播放量", "点赞数", "评论数",
-        "转发数", "收藏数", "音频", "翻译"]
-WIDTHS = [14, 14, 18, 42, 30, 38, 32, 10, 10, 10, 10, 10, 40, 40]
-
-
-def create_ledger(path: Path) -> bool:
+def create_ledger(path: Path) -> tuple[bool, str]:
+    """建 14 列台账模板。返回 (成功, 失败原因)。"""
     try:
         import openpyxl
         from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
         from openpyxl.utils import get_column_letter
     except Exception:  # noqa: BLE001
-        _line(FAIL, "缺 openpyxl，无法创建台账：webapp\\.venv\\Scripts\\python.exe -m pip install openpyxl")
-        return False
+        return False, ("缺 openpyxl，无法创建台账："
+                       "webapp\\.venv\\Scripts\\python.exe -m pip install openpyxl")
 
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "对标记录-模板"
-    fill = PatternFill("solid", fgColor="1F4E79")
-    font = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
-    thin = Side(style="thin", color="BFBFBF")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    for i, (c, w) in enumerate(zip(COLS, WIDTHS), 1):
-        cell = ws.cell(row=1, column=i, value=c)
-        cell.fill, cell.font, cell.alignment, cell.border = fill, font, center, border
-        ws.column_dimensions[get_column_letter(i)].width = w
-    ws.row_dimensions[1].height = 26
-    ws.freeze_panes = "C2"
-    ws.auto_filter.ref = "A1:N1"
+    try:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "对标记录-模板"
+        fill = PatternFill("solid", fgColor="1F4E79")
+        font = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
+        thin = Side(style="thin", color="BFBFBF")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for i, (c, w) in enumerate(zip(COLS, WIDTHS), 1):
+            cell = ws.cell(row=1, column=i, value=c)
+            cell.fill, cell.font, cell.alignment, cell.border = fill, font, center, border
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.row_dimensions[1].height = 26
+        ws.freeze_panes = "C2"
+        ws.auto_filter.ref = "A1:N1"
 
-    note = wb.create_sheet("说明")
-    rows = [
-        "TikTok 对标工作台 · 视频台账",
-        "",
-        "1. 每个账号一张 sheet，名称必须是「对标记录-<账号名>」。",
-        "2. 表头固定 14 列，不要改列名、不要插列、不要改顺序。",
-        "3. 本文件必须放在台账目录（WB_LEDGER_DIR）内，工作台才能读到。",
-        "4. 「对标记录-模板」只作格式模板：新增账号后用 pipeline\\scripts\\add_account_sheet.py 复制。",
-        "5. 图文账号另有 12 列共用表，不在本文件。",
-    ]
-    for r, text in enumerate(rows, 1):
-        note.cell(row=r, column=1, value=text)
-    note.column_dimensions["A"].width = 80
-    note["A1"].font = Font(name="微软雅黑", size=14, bold=True, color="1F4E79")
+        note = wb.create_sheet("说明")
+        rows = [
+            "TikTok 对标工作台 · 视频台账",
+            "",
+            "1. 每个账号一张 sheet，名称必须是「对标记录-<账号名>」。",
+            "2. 表头固定 14 列，不要改列名、不要插列、不要改顺序。",
+            "3. 本文件必须放在台账目录（WB_LEDGER_DIR）内，工作台才能读到。",
+            "4. 「对标记录-模板」只作格式模板：新增账号后用 pipeline\\scripts\\add_account_sheet.py 复制。",
+            "5. 图文账号另有 12 列共用表，不在本文件。",
+        ]
+        for r, text in enumerate(rows, 1):
+            note.cell(row=r, column=1, value=text)
+        note.column_dimensions["A"].width = 80
+        note["A1"].font = Font(name="微软雅黑", size=14, bold=True, color="1F4E79")
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    wb.save(path)
-    return True
+        path.parent.mkdir(parents=True, exist_ok=True)
+        wb.save(path)
+        return True, ""
+    except OSError as exc:
+        return False, f"台账无法创建（写入失败）：{path}（{exc.__class__.__name__}: {exc}）"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"台账无法创建：{path}（{exc.__class__.__name__}: {exc}）"
 
 
-def create_accounts(ledger: Path, dry: bool) -> bool:
-    p = PIPE / "accounts.json"
-    example = PIPE / "accounts.example.json"
-    if p.exists():
-        return True
-    if not example.exists():
-        _line(FAIL, f"缺 {example.name}，无法生成 accounts.json")
-        return False
-    cfg = json.loads(example.read_text(encoding="utf-8"))
+def find_example(pipe: Path) -> Path | None:
+    """accounts.example.json：先看当前 pipeline 目录，再退回包/仓库自带的 `pipeline\\`。
+
+    （单测用 `--pipeline-dir <临时>` 时临时目录里当然没有示例文件，必须能退回仓库那份。）
+    """
+    for p in (pipe / "accounts.example.json", ROOT / "pipeline" / "accounts.example.json"):
+        if p.is_file():
+            return p
+    return None
+
+
+def create_accounts(pipe: Path, ledger: Path) -> tuple[bool, str]:
+    """从 accounts.example.json 生成 accounts.json（示例账号全部停用）。返回 (成功, 失败原因)。"""
+    p = pipe / "accounts.json"
+    example = find_example(pipe)
+    if example is None:
+        return False, f"缺 accounts.example.json（找过 {pipe} 与 {ROOT / 'pipeline'}），无法生成 accounts.json"
+    try:
+        cfg = json.loads(example.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        return False, f"accounts.example.json 解析失败：{exc.__class__.__name__}: {exc}"
+    if not isinstance(cfg, dict):
+        return False, "accounts.example.json 顶层不是对象"
     cfg["xlsx"] = str(ledger)
-    cfg["metrics_file"] = str(PIPE / "reports" / "daily_metrics.jsonl")
-    cfg["reports_root"] = str(PIPE / "reports")
+    cfg["metrics_file"] = str(pipe / "reports" / "daily_metrics.jsonl")
+    cfg["reports_root"] = str(pipe / "reports")
     for acc in cfg.get("accounts", []):
+        if not isinstance(acc, dict):
+            continue
         acc["active"] = False          # 示例账号默认停用，用户自己加真账号
-        acc["out_dir"] = str(PIPE / "output")
-        acc["audio_dir"] = str(PIPE / "output" / f"{acc.get('account', 'account')}_audio")
-    if dry:
-        return True
-    p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-    (PIPE / "reports").mkdir(parents=True, exist_ok=True)
-    return True
+        acc["out_dir"] = str(pipe / "output")
+        acc["audio_dir"] = str(pipe / "output" / f"{acc.get('account', 'account')}_audio")
+    try:
+        pipe.mkdir(parents=True, exist_ok=True)
+        (pipe / "reports").mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True, ""
+    except OSError as exc:
+        return False, f"accounts.json 无法生成（写入失败）：{p}（{exc.__class__.__name__}: {exc}）"
 
 
-def main() -> int:
+def init_package(pipe: Path, ledger_dir: Path, webapp: Path, dry: bool,
+                 quiet: bool = False) -> list[tuple[str, str]]:
+    """只创建缺失的目录/台账/accounts.json。返回 [(kind, message)]，空 = 全就绪。
+
+    kind ∈ {dirs, ledger, accounts, accounts_parse}；调用方决定打 [FAIL] 还是写日志。
+    """
+    def info(text: str) -> None:
+        if not quiet:
+            print(text)
+
+    problems: list[tuple[str, str]] = []
+
+    # 1) 目录：pipeline / ledger / output / reports / webapp\data
+    for d in (pipe, ledger_dir, pipe / "output", pipe / "reports", webapp / "data"):
+        if dry:
+            continue
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            problems.append(("dirs", f"包内目录不可写：{d}（{exc.__class__.__name__}: {exc}）"))
+    if problems:                       # 目录都建不了，后面必然连锁失败，直接收口
+        return problems
+
+    # 2) 台账：只创建缺失，绝不覆盖（已存在时连 openpyxl 都不 import）
+    accounts, acc_err = read_accounts(pipe)
+    ledger = find_ledger(accounts, ledger_dir)
+    if ledger is not None:
+        info(f"{OK} 台账：{ledger}")
+    else:
+        target = ledger_dir / "tiktok_对标.xlsx"
+        if dry:
+            info(f"{WARN} 台账不存在，将创建：{target}")
+        else:
+            ok, why = create_ledger(target)
+            if ok:
+                ledger = target
+                info(f"{OK} 已创建台账模板：{target}")
+            else:
+                problems.append(("ledger", why))
+
+    # 3) accounts.json：存在就只读不写；坏了如实报（这是允许的 [FAIL] 之一）
+    if acc_err:
+        problems.append(("accounts_parse",
+                         f"accounts.json 无法解析：{pipe / 'accounts.json'}（{acc_err}）"))
+    elif (pipe / "accounts.json").is_file():
+        info(f"{OK} accounts.json：已存在（未改动）")
+    elif ledger is None:
+        info(f"{WARN} 没有台账，本轮的 accounts.json 生成被跳过")
+    elif dry:
+        info(f"{WARN} accounts.json 不存在，将生成（示例账号默认停用）")
+    else:
+        ok, why = create_accounts(pipe, ledger)
+        if ok:
+            info(f"{OK} accounts.json：已生成（示例账号默认停用）")
+        else:
+            problems.append(("accounts", why))
+    return problems
+
+
+def first_run_log_path() -> Path:
+    log_dir = Path(os.environ.get("WB_LOG_DIR") or (ROOT / "logs"))
+    return log_dir / "first-run.log"
+
+
+def append_first_run_log(problems: list[tuple[str, str]]) -> Path | None:
+    """`--init-only` 失败时把原因写进 logs\\first-run.log（失败不阻断启动）。"""
+    p = first_run_log_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        # 每次启动都跑：若一直失败，不设上限这个文件会无限长（用户包里的隐患）
+        if p.is_file() and p.stat().st_size > 512 * 1024:
+            p.replace(p.with_suffix(".log.1"))
+        import datetime as _dt
+
+        stamp = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with p.open("a", encoding="utf-8") as f:
+            for kind, msg in problems:
+                f.write(f"[{stamp}] {kind}: {msg}\n")
+        return p
+    except OSError:
+        return None
+
+
+# ────────────────────────── 入口 ──────────────────────────
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="TikTok 对标工作台 · 新机自检与初始化")
     ap.add_argument("--dry-run", action="store_true", help="只检查，不写文件")
-    ap.add_argument("--ledger-dir", default=None, help="台账目录（默认 WB_LEDGER_DIR 或 <仓库>/ledger）")
+    ap.add_argument("--ledger-dir", default=None,
+                    help="台账目录（默认 WB_LEDGER_DIR 或 <包根>/ledger）")
+    ap.add_argument("--pipeline-dir", default=None,
+                    help="pipeline 目录（默认 WB_PIPELINE_DIR 或 <包根>/pipeline）")
     ap.add_argument("--no-network", action="store_true", help="跳过 TikTok 连通性测试")
-    a = ap.parse_args()
+    ap.add_argument("--portable", action="store_true",
+                    help="便携包模式：不查 venv、缺件一律 [WARN]，[FAIL] 只留三类")
+    ap.add_argument("--init-only", action="store_true",
+                    help="每次启动的快路径：不检查、不联网、只补缺失文件（< 2 秒，退出码 0）")
+    a = ap.parse_args(argv)
+
+    pipe = Path(a.pipeline_dir) if a.pipeline_dir else Path(
+        os.environ.get("WB_PIPELINE_DIR") or (ROOT / "pipeline"))
+    ledger_dir = Path(a.ledger_dir) if a.ledger_dir else Path(
+        os.environ.get("WB_LEDGER_DIR") or (ROOT / "ledger"))
+
+    # ── 快路径：每次启动都跑，只补缺失文件，不联网、不检查、失败写日志继续 ──
+    if a.init_only:
+        problems = init_package(pipe, ledger_dir, WEBAPP, a.dry_run, quiet=True)
+        if problems:
+            log = append_first_run_log(problems)
+            tail = f"，已写入日志：{log}" if log else "（日志写入失败）"
+            _line(WARN, f"初始化未全部完成：{len(problems)} 项{tail}")
+            for _kind, msg in problems:
+                print(f"       - {msg}")
+        return 0
 
     print("=" * 62)
-    print("TikTok 对标工作台 · 首次运行自检")
+    print("TikTok 对标工作台 · 首次运行自检" + ("（便携包）" if a.portable else ""))
     print("=" * 62)
 
     blocking = 0
-    if not check_python():
-        blocking += 1
-    if not check_venv("pipeline", PIPE / ".venv",
-                      r'py -3.13 -m venv pipeline\.venv && pipeline\.venv\Scripts\python.exe -m pip install -r pipeline\requirements.txt'):
-        blocking += 1
-    if not check_venv("webapp", WEBAPP / ".venv",
-                      r'python -m venv webapp\.venv && webapp\.venv\Scripts\python.exe -m pip install -r webapp\requirements.txt'):
-        blocking += 1
+    if a.portable:
+        # 包里没有 venv：只如实打印包内解释器，绝不因为「缺 venv」报 FAIL
+        check_package_python()
+        check_python(portable=True)
+    else:
+        if not check_python():
+            blocking += 1
+        if not check_venv("pipeline", pipe / ".venv",
+                          r'py -3.13 -m venv pipeline\.venv && pipeline\.venv\Scripts\python.exe -m pip install -r pipeline\requirements.txt'):
+            blocking += 1
+        if not check_venv("webapp", WEBAPP / ".venv",
+                          r'python -m venv webapp\.venv && webapp\.venv\Scripts\python.exe -m pip install -r webapp\requirements.txt'):
+            blocking += 1
+
     check_ffmpeg()
 
-    proxy = detect_proxy()
-    check_proxy(proxy)
+    proxy = detect_proxy(pipe / "scripts")
+    check_proxy(proxy, portable=a.portable)
     if not a.no_network:
         check_tiktok(proxy)
     check_model()
 
-    ledger_dir = Path(a.ledger_dir) if a.ledger_dir else Path(
-        os.environ.get("WB_LEDGER_DIR") or (ROOT / "ledger")
-    )
-    accounts = read_accounts()
-    ledger = find_ledger(accounts, ledger_dir)
-
     print("-" * 62)
-    if ledger:
-        _line(OK, f"台账：{ledger}")
-    else:
-        target = ledger_dir / "tiktok_对标.xlsx"
-        _line(WARN, f"台账不存在，将创建：{target}")
-        if a.dry_run:
-            _line(WARN, "dry-run：未写入")
-        elif create_ledger(target):
-            ledger = target
-            _line(OK, f"已创建台账模板：{target}")
+    problems = init_package(pipe, ledger_dir, WEBAPP, a.dry_run)
+    for _kind, msg in problems:
+        _line(FAIL, msg)
 
-    if ledger and create_accounts(ledger, a.dry_run):
-        _line(OK, f"accounts.json：{'已存在' if (PIPE / 'accounts.json').exists() else '已生成（示例账号默认停用）'}")
-    elif not ledger:
-        _line(FAIL, "没有台账，跳过 accounts.json 生成")
-
-    cookie = PIPE / "cc_cookie.txt"
-    if cookie.exists():
+    cookie = pipe / "cc_cookie.txt"
+    if cookie.is_file():
         _line(OK, "TikTok cookie：已存在")
     else:
         _line(WARN, "TikTok cookie 缺失：抓取会受限，需要你自己导出并放到 pipeline\\cc_cookie.txt")
 
     print("-" * 62)
+    if a.portable:
+        if problems:
+            print(f"\n有 {len(problems)} 项阻塞问题，先按上面的提示处理再继续。")
+            return 1
+        print("\n环境检查通过。")
+        return 0
+
     print("下一步：")
     print("  1) 启动看板：webapp\\start.bat 或 webapp\\.venv\\Scripts\\python.exe webapp\\app.py")
     print("  2) 浏览器打开 http://127.0.0.1:8789 ，点「＋ 新增账号」加真账号（面向地区/语言按国家填）")
     print("  3) 放台账/跑一键运行；首次转写会下载 whisper 模型（国内先设 HF_ENDPOINT）")
+    blocking += len(problems)
     if blocking:
         print(f"\n有 {blocking} 项阻塞问题，先按上面的提示装好再继续。")
         return 1
