@@ -170,9 +170,11 @@ def read_accounts() -> dict:
 
 
 def find_ledger(accounts: dict, ledger_dir: Path) -> Path | None:
-    configured = Path(accounts.get("xlsx") or "")
-    if str(configured) and configured.exists():
-        return configured
+    raw = str(accounts.get("xlsx") or "").strip()
+    if raw:
+        configured = Path(raw)
+        if configured.is_file():
+            return configured
     if ledger_dir.exists():
         files = sorted(ledger_dir.glob("*.xlsx"))
         if files:
