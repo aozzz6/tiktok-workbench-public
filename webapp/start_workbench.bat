@@ -6,7 +6,7 @@ rem  Usage: double-click this file, or run start_workbench.bat
 rem
 rem  Note: the built-in scheduler is DISABLED; daily updates are
 rem        handled by a WorkBuddy automation. This script only
-rem        starts the webapp service (port 8787) for viewing UI.
+rem        starts the webapp service (port 8789) for viewing UI.
 rem
 rem  IMPORTANT: keep this file pure ASCII. cmd.exe parses .bat with
 rem  the OEM codepage (GBK here), so non-ASCII bytes get garbled and
@@ -15,7 +15,8 @@ rem ============================================================
 setlocal
 
 set "APP_DIR=%~dp0"
-set "PORT=8787"
+set "PORT=8789"
+set "WB_PORT=8789"
 
 rem --- already running? just open the browser ---
 netstat -ano | findstr ":%PORT%" | findstr LISTENING >nul 2>&1

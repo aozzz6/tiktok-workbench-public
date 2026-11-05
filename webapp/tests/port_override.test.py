@@ -55,7 +55,7 @@ class DailyBatchBaseTests(unittest.TestCase):
         clean = {k: v for k, v in os.environ.items() if k not in ("WB_PORT", "PORT", "WB_BASE")}
         clean.update(env)
         with patch.dict(os.environ, clean, clear=True):
-            sys.path.insert(0, str(Path(r"D:/workbuddy_project/tiktok/pipeline")))
+            sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipeline"))
             import scripts.daily_batch as db
             importlib.reload(db)
             # 2026-10-24：workbench_base() 现在会先扫候选端口找真工作台。

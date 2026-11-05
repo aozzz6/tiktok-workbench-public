@@ -7,10 +7,11 @@
  * 断言：任何 (账号, force) 组合下，查询串都必须以 `?` 开头。
  */
 const fs = require("fs");
+const path = require("path");
 const { JSDOM } = require("jsdom");
 
-const appJs = fs.readFileSync("D:/workbuddy_project/tiktok/webapp/static/app.js", "utf8");
-const html = fs.readFileSync("D:/workbuddy_project/tiktok/webapp/static/index.html", "utf8");
+const appJs = fs.readFileSync(path.resolve(__dirname, "..", "static", "app.js"), "utf8");
+const html = fs.readFileSync(path.resolve(__dirname, "..", "static", "index.html"), "utf8");
 
 const ACCOUNTS = ["vivi_ashop", "kee.yaden", "charelttce", "mini.cases3", "greenforu", "selsky88", "lifewillcool"];
 

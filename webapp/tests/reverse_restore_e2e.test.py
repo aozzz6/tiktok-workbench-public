@@ -76,7 +76,7 @@ class RestoreEndToEndTests(unittest.TestCase):
 
     @staticmethod
     def _real_dirs():
-        root = Path(r"D:/workbuddy_project/tiktok/reverse")
+        root = Path(__file__).resolve().parents[2] / "reverse"
         return {p.name for p in root.iterdir() if p.is_dir()} if root.is_dir() else set()
 
     def test_zz_no_leak_into_real_reverse_dir(self):

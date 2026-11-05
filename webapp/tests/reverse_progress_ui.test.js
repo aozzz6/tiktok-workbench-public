@@ -9,9 +9,10 @@
  * 运行：NODE_PATH=<node workspace> node tests/reverse_progress_ui.test.js
  */
 const fs = require("fs");
+const path = require("path");
 const { JSDOM, VirtualConsole } = require("jsdom");
 
-const ROOT = "D:/workbuddy_project/tiktok/webapp";
+const ROOT = path.resolve(__dirname, "..");
 const html = fs.readFileSync(ROOT + "/static/index.html", "utf8");
 const revPath = ROOT + "/static/reverse.js";
 const reverseJs = fs.readFileSync(revPath, "utf8");

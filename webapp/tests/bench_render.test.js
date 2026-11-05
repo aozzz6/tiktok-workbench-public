@@ -2,10 +2,11 @@
  * 复现真实触发路径：进入「对标分析」(loadBench→renderBench) → 离开 → 再次进入 → 崩溃
  */
 const fs = require("fs");
+const path = require("path");
 const { JSDOM } = require("jsdom");
 
-const appJs = fs.readFileSync("D:/workbuddy_project/tiktok/webapp/static/app.js", "utf8");
-const html = fs.readFileSync("D:/workbuddy_project/tiktok/webapp/static/index.html", "utf8");
+const appJs = fs.readFileSync(path.resolve(__dirname, "..", "static", "app.js"), "utf8");
+const html = fs.readFileSync(path.resolve(__dirname, "..", "static", "index.html"), "utf8");
 
 // 真实后端返回结构（greenforu，已实测）
 const payload = {

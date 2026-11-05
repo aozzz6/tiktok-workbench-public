@@ -2,7 +2,7 @@
 chcp 65001 >nul
 setlocal
 set WEBAPP=%~dp0
-set BASEPY=D:\workbuddy_project\tiktok\pipeline\.venv\Scripts\python.exe
+set BASEPY=%~dp0..\pipeline\.venv\Scripts\python.exe
 if not exist "%BASEPY%" set BASEPY=python
 
 echo [1/2] 创建独立虚拟环境 .venv ...

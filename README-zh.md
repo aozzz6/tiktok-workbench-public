@@ -107,7 +107,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File webapp\wb_start.ps1
 在仓库根目录下用流水线的解释器：
 
 ```bat
-set PY=D:\workbuddy_project\tiktok\pipeline\.venv\Scripts\python.exe
+set PY=D:\tiktok-workbench\pipeline\.venv\Scripts\python.exe
 
 rem 抓一个账号（全量抓取，会覆盖 scrape_<账号>.json）
 %PY% pipeline\scripts\scrape_tiktok_video.py --account <账号> --audio-dir pipeline\output\<账号>_audio --out-dir pipeline\output
@@ -135,7 +135,7 @@ rem 只抓指定视频并「合并」进已有文件（保住历史条目）
 流水线单元测试 —— 一个方面一个脚本，打印 `通过 N / M`，退出码 0/1：
 
 ```powershell
-cd D:\workbuddy_project\tiktok
+cd D:\tiktok-workbench
 # 用例里有 ✓ / ✗ / ⚠：不设这一行，默认 GBK 控制台会 UnicodeEncodeError，把用例误判成失败
 $env:PYTHONIOENCODING = "utf-8"
 Get-ChildItem pipeline\tests\test_*.py | ForEach-Object {
@@ -165,12 +165,12 @@ node tests\overview_ui.test.js                             # 任意 *.test.js
 
 > 注意：部分历史用例（`bench_*.test.js`、`accounts_admin_ui.test.js`、`sheet_view.test.js` 等）
 > 针对的是对标页重写前的旧 DOM，当前本来就是红的，与上面这条命令无关 —— 它们需要重写，不是环境问题。
-> 本次修复的回归用例是 `tests\rv2_kpi_empty.test.js`。
+> 2026-11-05 这次三处修复的回归用例是 `tests\bench_empty_data.test.js`、`tests\llm_endpoint_url.test.py` 与 `tests\repo_paths.test.py`。
 
 本次改动的验收用例，走总跑脚本（**在仓库根目录下跑**，下面这个相对路径是相对仓库根的）：
 
 ```powershell
-cd D:\workbuddy_project\tiktok
+cd D:\tiktok-workbench
 powershell -NoProfile -ExecutionPolicy Bypass -File qa\run-all.ps1
 ```
 
@@ -287,8 +287,8 @@ pipeline\.venv\Scripts\python.exe -m pip install -r pipeline\requirements.txt
 `generate_benchmark_report.py:24`、`audit_ledger.py:75`。它们不在主链路上：
 真要用某个脚本时，再改那一个。
 
-**本 README 里的命令也不能照抄。** `set PY=...` 和两处 `cd D:\workbuddy_project\tiktok`
-（在「跑流水线」和「跑测试」两节里）都带着作者的路径，要换成你自己的。
+**本 README 里的命令也不能照抄。** `set PY=...` 和两处 `cd D:\tiktok-workbench`
+（都在「跑测试」一节里）都带着作者的路径，要换成你自己的。
 
 ### 抓取要自备两样东西
 

@@ -1,4 +1,4 @@
-const { chromium } = require('D:/workbuddy_project/tiktok/webapp/node_modules/playwright-core');
+const { chromium } = require('playwright-core');
 const fs = require('fs'), path = require('path');
 const out = process.argv[2];
 fs.mkdirSync(out, {recursive:true});

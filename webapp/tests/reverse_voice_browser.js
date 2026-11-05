@@ -1,6 +1,6 @@
 const {chromium}=require('playwright');
 const fs=require('fs'),path=require('path');
-const out=process.argv[2],id='991027'+Date.now(),root=path.resolve('D:/workbuddy_project/tiktok/reverse'),dir=path.resolve(root,id);
+const out=process.argv[2],id='991027'+Date.now(),root=path.resolve(__dirname,'..','..','reverse'),dir=path.resolve(root,id);
 const results=[],errors=[];const check=(name,pass)=>{results.push({name,pass:!!pass});console.log(pass?'PASS':'FAIL',name);};
 const report=JSON.parse(fs.readFileSync(path.join(root,'7701034631671516439/report.json'),'utf8'));
 const info={video_id:id,stage:'done',has_report:true,report_mode:'restore',frames:30,probe:{duration:15.04,width:576,height:1024,has_audio:true},meta:{author:'验收临时任务',language_guess:'de',desc:'Deutsche Beschreibung'},report:`/tk_reverse/${id}/TK反推报告_${id}.html`};

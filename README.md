@@ -126,7 +126,7 @@ UTF-8 with BOM**, or Windows PowerShell 5.1 reads it as GBK and the script break
 Everything runs from the repository root with the pipeline interpreter:
 
 ```bat
-set PY=D:\workbuddy_project\tiktok\pipeline\.venv\Scripts\python.exe
+set PY=D:\tiktok-workbench\pipeline\.venv\Scripts\python.exe
 
 rem scrape one account (full run, overwrites scrape_<account>.json)
 %PY% pipeline\scripts\scrape_tiktok_video.py --account <account> --audio-dir pipeline\output\<account>_audio --out-dir pipeline\output
@@ -158,7 +158,7 @@ Two behaviours worth knowing, both added 2026-11-02:
 Pipeline unit tests — one script per area, each exits 0/1 and prints `通过 N / M`:
 
 ```powershell
-cd D:\workbuddy_project\tiktok
+cd D:\tiktok-workbench
 # The cases print ✓ / ✗ / ⚠. Without this line a default GBK console raises
 # UnicodeEncodeError and the case is reported as a failure.
 $env:PYTHONIOENCODING = "utf-8"
@@ -193,14 +193,15 @@ node tests\overview_ui.test.js                             # any *.test.js
 > Note: some legacy cases (`bench_*.test.js`, `accounts_admin_ui.test.js`,
 > `sheet_view.test.js`, …) target the DOM from before the 对标 page was rewritten
 > and are red on purpose-unchanged code. They need rewriting; they are not an
-> environment problem. The regression case added for this fix is
-> `tests\rv2_kpi_empty.test.js`.
+> environment problem.
+> For the 2026-11-05 fixes the regression cases are `tests\bench_empty_data.test.js`,
+> `tests\llm_endpoint_url.test.py` and `tests\repo_paths.test.py`.
 
 Acceptance cases for the current change, through the shared runner (run this from
 the repository root — the path below is relative to it):
 
 ```powershell
-cd D:\workbuddy_project\tiktok
+cd D:\tiktok-workbench
 powershell -NoProfile -ExecutionPolicy Bypass -File qa\run-all.ps1
 ```
 
@@ -338,7 +339,7 @@ scripts under `pipeline/scripts/` hard-code the same paths — for example
 chain: fix each one when you actually need that script.
 
 **The commands in this README are not portable either.** `set PY=...` and the two
-`cd D:\workbuddy_project\tiktok` lines (in *Run the pipeline* and *Run the tests*)
+`cd D:\tiktok-workbench` lines (both in *Run the tests*)
 carry the author's path; replace them with your own.
 
 ### Scraping needs two things you have to supply

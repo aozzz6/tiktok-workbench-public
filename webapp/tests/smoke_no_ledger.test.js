@@ -1,9 +1,10 @@
 /* 一次性冒烟：删除台账区块后，页面能正常 boot、各视图可切换、无 jsdom 报错 */
 const fs = require("fs");
+const path = require("path");
 const { JSDOM, VirtualConsole } = require("jsdom");
 
-const html = fs.readFileSync("D:/workbuddy_project/tiktok/webapp/static/index.html", "utf8");
-const appJs = fs.readFileSync("D:/workbuddy_project/tiktok/webapp/static/app.js", "utf8");
+const html = fs.readFileSync(path.resolve(__dirname, "..", "static", "index.html"), "utf8");
+const appJs = fs.readFileSync(path.resolve(__dirname, "..", "static", "app.js"), "utf8");
 
 const errors = [];
 const vc = new VirtualConsole();

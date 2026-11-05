@@ -185,7 +185,7 @@ class HealthProbeBigResponseTests(unittest.TestCase):
             "ok": True,
             "ts": 1730000000.0,
             "diagnostics": {
-                "pipeline_dir": "D:\\workbuddy_project\\tiktok\\pipeline",
+                "pipeline_dir": str(Path(__file__).resolve().parents[2] / "pipeline"),
                 "ledger_files": [f"对标记录-account{i:03d}.xlsx" for i in range(300)],
             },
         }, ensure_ascii=False).encode("utf-8")

@@ -104,6 +104,18 @@
     const n = o.n || D.series.length;
     const kind = o.kind || 'area';
     const s = seriesSlice(D, n);
+    // 空数据：没有任何带发布时间的视频时没有可画的趋势，
+    // 不能去读 s[0].date / peak.date（undefined.date 会抛 TypeError）。
+    if (!s.length) {
+      return S.mod({
+        key: 'trend',
+        title: o.title || '每日发布与播放',
+        sub: '暂无发布数据',
+        cls: 'b-trend ' + (o.cls || ''),
+        body: '<p class="muted b-empty">暂无发布数据（还没有抓取到带发布时间的视频）</p>',
+        foot: o.foot
+      });
+    }
     const peak = s.reduce((m, d) => (d.plays > m.plays ? d : m), s[0]);
     const total = s.reduce((a, d) => a + d.videos, 0);
     return S.mod({
@@ -396,14 +408,17 @@
   function topvideos(D, o = {}) {
     const n = o.n || 5;
     const list = D.videos.slice().sort((a, b) => b.plays - a.plays).slice(0, n);
-    const rows = list.map((v, i) =>
+    // 空列表时 list[0] 是 undefined，不能再读 list[0].plays。
+    const rows = list.length ? list.map((v, i) =>
       '<div class="b-topv" data-vid="' + S.esc(v.vid) + '">' +
       '<span class="b-topv-n">' + (i + 1) + '</span>' +
       '<div class="b-topv-b"><b title="' + S.esc(v.title) + '">' + S.esc(v.title) + '</b>' +
       '<span class="tiny muted">' + S.esc(v.account) + ' · ' + v.day + ' · 互动 ' + S.pct(v.engagement, 2) + '</span></div>' +
-      '<b class="b-topv-v tnum">' + S.nf(v.plays) + '</b></div>').join('');
+      '<b class="b-topv-v tnum">' + S.nf(v.plays) + '</b></div>').join('')
+      : '<p class="muted b-empty">暂无视频数据</p>';
     return S.mod({
-      key: 'topvideos', title: o.title || '播放 TOP 视频', sub: o.sub || ('Top ' + list.length + ' · 单条最高 ' + S.nf(list[0].plays)),
+      key: 'topvideos', title: o.title || '播放 TOP 视频',
+      sub: o.sub || ('Top ' + list.length + (list.length ? ' · 单条最高 ' + S.nf(list[0].plays) : ' · 暂无数据')),
       cls: 'b-topvmod ' + (o.cls || ''), body: rows,
       foot: '播放为抓取时累计值'
     });

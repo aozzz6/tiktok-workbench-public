@@ -4,10 +4,11 @@
  * 运行： NODE_PATH=... node tests/bench_products.test.js
  */
 const fs = require("fs");
+const path = require("path");
 const { JSDOM } = require("jsdom");
 
-const appJs = fs.readFileSync("D:/workbuddy_project/tiktok/webapp/static/app.js", "utf8");
-const html = fs.readFileSync("D:/workbuddy_project/tiktok/webapp/static/index.html", "utf8");
+const appJs = fs.readFileSync(path.resolve(__dirname, "..", "static", "app.js"), "utf8");
+const html = fs.readFileSync(path.resolve(__dirname, "..", "static", "index.html"), "utf8");
 
 // 真实后端结构（fields 与 benchmark.py products_top 对齐）
 const PRODUCTS = [

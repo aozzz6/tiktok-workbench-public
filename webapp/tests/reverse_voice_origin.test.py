@@ -7,7 +7,7 @@
 现在改成按 **host 判定**：host 是 `127.0.0.1` 或 `localhost`（任意端口）→ 放行；
 其它 host → 403「仅允许本机工作台保存口播信息」；不带 Origin → 放行（保持原行为）。
 
-隔离：`tk_reverse.REVERSE_DIR` patch 到临时目录，不碰生产 `D:/workbuddy_project/tiktok/reverse`。
+隔离：`tk_reverse.REVERSE_DIR` patch 到临时目录，不碰生产 `reverse/`。
 跑法：webapp/.venv/Scripts/python.exe tests/reverse_voice_origin.test.py
 """
 import atexit

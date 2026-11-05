@@ -3,6 +3,42 @@
 All notable changes to this workbench are recorded here, newest first.
 This project has no version tags yet, so entries are dated instead of numbered.
 
+## 2026-11-05 — Empty data no longer blanks the benchmark page; AI endpoints resolve correctly; the app survives being moved
+
+### Fixed
+
+- **The 对标分析 (benchmark) page opens again when there is no video data.** With an empty
+  `/api/benchmark` payload, `bench2/derive.js` turned an empty last day into
+  `new Date('')` → `toISOString()` (`RangeError: Invalid time value`), and `bench2/bench.js`
+  dereferenced an empty series in `trend()` (`reading 'date'`) and `topvideos()`
+  (`reading 'plays'`). Both now render an empty state. Regression cases:
+  `webapp/tests/bench_empty_data.test.js`.
+- **AI endpoints stored as full URLs are no longer doubled.** `~/.workbuddy/models.json` may
+  store the full endpoint (e.g. `https://api.deepseek.com/v1/chat/completions`), but
+  `llm._endpoint()` appended `/chat/completions` unconditionally, so the request went to
+  `.../chat/completions/chat/completions` and answered 404. Full endpoints are now used
+  as-is; base URLs are still completed exactly as before. Regression case:
+  `webapp/tests/llm_endpoint_url.test.py`. (A valid key and balance are still required for
+  real calls — the 2026-11-05 check found the configured DeepSeek account at 402 and the
+  GLM key at 401.)
+- **The app works after the folder was moved.** Launchers (`start_workbench.vbs`,
+  `start_workbench.bat`, `_serve*.bat`, `install.bat`) now derive their own location and use
+  port 8789 (`_serve_port.bat` takes the port from its caller, default 8789); the 11 jsdom
+  cases that hardcoded `D:/workbuddy_project/tiktok/webapp/static`, plus `port_override.test.py`
+  and four other test scripts, now resolve paths relative to the repository; both READMEs
+  use the current checkout path. New guard against the old path returning:
+  `webapp/tests/repo_paths.test.py`.
+
+### Known
+
+- The standalone page `webapp/static/bench2.html` still has the same empty-data crash in
+  `bench2/data-live.js`; `index.html` does not load it. See `qa/gaps.md` #22.
+- The launcher path change was checked statically and by an idempotent start while 8789 was
+  already running; a true cold start from another working directory was not performed
+  (`qa/gaps.md` #20).
+- `qa/run-all.ps1` stays red in this repository because `qa/T-04` pins a commit that is not in
+  this history and `test_publish_artifacts.py` is 8/13; see `qa/gaps.md` #21.
+
 ## 2026-11-04 — A deploy checklist for the next machine
 
 ### Added

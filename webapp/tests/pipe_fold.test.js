@@ -8,10 +8,11 @@
  * 运行：NODE_PATH=... node tests/pipe_fold.test.js
  */
 const fs = require("fs");
+const path = require("path");
 const { JSDOM, VirtualConsole } = require("jsdom");
 
-const HTML = "D:/workbuddy_project/tiktok/webapp/static/index.html";
-const APP = "D:/workbuddy_project/tiktok/webapp/static/app.js";
+const HTML = path.resolve(__dirname, "..", "static", "index.html");
+const APP = path.resolve(__dirname, "..", "static", "app.js");
 const html = fs.readFileSync(HTML, "utf8");
 const appJs = fs.readFileSync(APP, "utf8");
 

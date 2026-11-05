@@ -1,10 +1,10 @@
-﻿# qa/run-all.ps1 —— 本作业（s2-scrape-failure-fix）的 QA 用例总跑器
+﻿# qa/run-all.ps1 —— 仓库的 QA 用例总跑器（跨作业；各目录自带 run.ps1）
 # 维护人：PM。QA 只负责写自己任务下的用例，**不要改这个文件**。
 # 为什么是 .ps1 而不是 .sh：本机没有 bash（实测 Get-Command bash 为空）。
 #
 # 约定：每个用例放在 qa/<task-id>/ ，入口按顺序找 run.ps1 / check.ps1 / run.py / run.sh
 # 每个入口必须：自己判 是/否，通过退出码 0，不通过退出码非 0，并打印一行可读的结论。
-# 跑法： powershell -NoProfile -ExecutionPolicy Bypass -File qa\run-all.ps1   （在仓库根 D:\workbuddy_project\tiktok 下）
+# 跑法： powershell -NoProfile -ExecutionPolicy Bypass -File qa\run-all.ps1   （在仓库根 D:\tiktok-workbench 下）
 #       注意：本机没有 PowerShell 7，`pwsh` 不存在（Get-Command pwsh 为空），别用 pwsh。
 
 $ErrorActionPreference = "Continue"

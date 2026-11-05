@@ -52,9 +52,16 @@
     const series = [...dayMap.values()].sort((a, b) => (a.full < b.full ? -1 : 1));
 
     const lastDay = series.length ? series[series.length - 1].full : '';
-    const cut = new Date(lastDay + 'T00:00:00');
-    cut.setDate(cut.getDate() - 6);
-    const last7Cut = cut.toISOString().slice(0, 10);
+    // 无数据（或最后一天不可解析）时没有 7 日窗口起点；空串表示「不设窗口」，
+    // 避免 new Date('T00:00:00') 的 Invalid Date 让 toISOString() 抛 RangeError。
+    let last7Cut = '';
+    if (lastDay) {
+      const cut = new Date(lastDay + 'T00:00:00');
+      if (!isNaN(cut.getTime())) {
+        cut.setDate(cut.getDate() - 6);
+        last7Cut = cut.toISOString().slice(0, 10);
+      }
+    }
 
     const byAcc = new Map();
     videos.forEach((v) => {

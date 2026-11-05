@@ -1,27 +1,32 @@
 ' TikTok 对标工作台 —— 开机/登录自启（隐藏窗口 + 幂等）
 '
-' 作用：用户登录时启动 webapp/app.py（FastAPI，端口 8787），
+' 作用：用户登录时启动 webapp/app.py（FastAPI，端口 8789），
 '       供 scheduler 每日 09:00 自动跑 9 账号日更。
 '
 ' 设计要点：
-'   1. 幂等——先用 netstat 检查 8787 是否已监听，已跑则直接退出，避免端口冲突
+'   1. 幂等——先用 netstat 检查 8789 是否已监听，已跑则直接退出，避免端口冲突
 '   2. 隐藏——用 pythonw.exe（无控制台）+ Run(..., 0, False) 不弹窗
 '   3. 日志——stdout/stderr 重定向到 logs/autostart.log，便于事后排查
 '   4. 路径全 ASCII，避免批处理/脚本编码问题
 '
-' 手动测试：wscript.exe "D:\workbuddy_project\tiktok\webapp\start_workbench.vbs"
+' 手动测试：wscript.exe start_workbench.vbs
 Option Explicit
 
 Dim APP_DIR, PORT, PY, LOG_DIR, LOG
-APP_DIR = "D:\workbuddy_project\tiktok\webapp"
-PORT    = 8787
+Dim ws, fso, exec, out, f1, envProc
+Set ws  = CreateObject("WScript.Shell")
+Set fso = CreateObject("Scripting.FileSystemObject")
+
+' APP_DIR = the folder this script lives in (webapp), never a fixed path
+APP_DIR = fso.GetParentFolderName(WScript.ScriptFullName)
+PORT    = 8789
 PY      = APP_DIR & "\.venv\Scripts\pythonw.exe"
 LOG_DIR = APP_DIR & "\logs"
 LOG     = LOG_DIR & "\autostart.log"
 
-Dim ws, fso, exec, out, f1
-Set ws  = CreateObject("WScript.Shell")
-Set fso = CreateObject("Scripting.FileSystemObject")
+' app.py _listen_port() reads WB_PORT; put it in the process env the child inherits
+Set envProc = ws.Environment("PROCESS")
+envProc("WB_PORT") = CStr(PORT)
 
 ' ── 幂等：端口已在监听则退出 ─────────────────────────────
 Set exec = ws.Exec("cmd /c netstat -ano | findstr :" & PORT & " | findstr LISTENING")

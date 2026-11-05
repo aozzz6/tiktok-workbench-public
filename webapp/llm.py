@@ -275,13 +275,27 @@ def api_style(model: dict) -> str:
 
 
 def _endpoint(style: str, model: dict) -> str:
+    """拼出实际请求地址。url 既可以是基础地址，也可以是**完整端点**，两种都认。
+
+    ★ T-12（2026-11-05）：用户 models.json 里常直接填完整端点
+      （如 https://api.deepseek.com/v1/chat/completions）。旧实现无条件追加
+      "/chat/completions"，请求变成 .../chat/completions/chat/completions → 404，
+      设置页「测试连接」永远失败。现在：已经是目标端点就原样返回，
+      是基础地址才按老规则拼接（老行为一字未改）。
+    """
     url = str(model["url"]).rstrip("/")
     if style == "anthropic":
+        if url.endswith("/messages"):       # 完整端点：.../v1/messages
+            return url
         return url + "/messages" if url.endswith("/v1") else url + "/v1/messages"
     if style == "gemini":
+        if ":generateContent" in url:       # 完整端点：.../models/<id>:generateContent
+            return url
         base = url if "/v1beta" in url or "/v1/" in url else url + "/v1beta"
         mid = str(model.get("id") or model.get("name") or "")
         return f"{base}/models/{mid}:generateContent"
+    if url.endswith("/chat/completions"):   # 完整端点：.../v1/chat/completions
+        return url
     return url + "/chat/completions"
 
 

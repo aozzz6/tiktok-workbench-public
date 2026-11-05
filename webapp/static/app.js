@@ -504,7 +504,7 @@ async function repairStart(ids) {
     const staleBackend = /^404\b/.test(msg);
     toast(staleBackend
       ? "修复未能启动：后端进程仍是旧代码，没有 /api/repair 接口。请双击 "
-        + "D:\\workbuddy_project\\tiktok\\webapp\\重启工作台.bat（或双击桌面 work 目录「重启工作台.bat」）重启后再试"
+        + "webapp\\重启工作台.bat（或双击桌面 work 目录「重启工作台.bat」）重启后再试"
       : "修复未能启动：" + msg, "error");
     // 非 404 多半是「没有可修项」/「有任务在跑」：把当前计划摊开，让用户看到原因
     if (!staleBackend) {
