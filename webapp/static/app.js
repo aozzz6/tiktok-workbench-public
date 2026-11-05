@@ -2040,6 +2040,53 @@ const REGION_LANG_UI = {
   in: "hi", pk: "ur", bd: "bn", id: "id", my: "ms", ph: "tl", th: "th", vn: "vi",
   cn: "zh", "cn-hk": "zh", "cn-tw": "zh", jp: "jp", kr: "kr",
 };
+function syncAddLang() {
+  const regionEl = $("#run-add-region");
+  const langEl = $("#run-add-lang");
+  if (!regionEl || !langEl) return;
+  const r = regionEl.value;
+  if (r && REGION_LANG_UI[r]) langEl.value = REGION_LANG_UI[r];
+  else langEl.value = "";   // 未标地区 → 交后端自动推断
+}
+
+async function submitRunAdd() {
+  const name = ($("#run-add-name").value || "").trim();
+  const hint = $("#run-add-hint");
+  if (!runAddValidate()) {
+    if (hint && !hint.innerHTML) hint.innerHTML = '<span class="hint-bad">✗ 账号名必填</span>';
+    return toast("请先修正账号名");
+  }
+  const region = ($("#run-add-region") || {}).value || "";
+  const payload = {
+    account: name,
+    region: region,
+    lang: ($("#run-add-lang") || {}).value || "",   // 空 = 让后端按 region 推断
+    nickname: ($("#run-add-nickname").value || "").trim(),
+    tags: ($("#run-add-tags").value || "").trim(),
+  };
+  try {
+    await api("/api/accounts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch (e) {
+    if (hint) hint.innerHTML = `<span class="hint-bad">✗ 保存失败：${esc(e.message)}</span>`;
+    return toast("新增失败：" + e.message);
+  }
+  toast("已创建并选用 " + name);
+  if (hint) hint.innerHTML = `<span class="hint-ok">✓ 已创建 ${esc(name)} 并在下拉中选用。下一步：点「开始运行」拉取该账号数据（建议同时勾选核心链）</span>`;
+  try {
+    CFG = await api("/api/config");           // 刷新账号清单
+    fillAccountSelects();
+    $("#run-account").value = name;           // 选用新账号
+  } catch (e) { console.warn("[accounts] 账号清单刷新失败（下次 boot 自愈）", e); }
+  $("#run-add-name").value = "";
+  $("#run-add-nickname").value = "";
+  $("#run-add-tags").value = "";
+  refreshActiveView();
+}
+
 let runProgress = null;          // {order:[key], state:{key:{status,note,startedAt}}}
 let runProgressTimer = null;
 
