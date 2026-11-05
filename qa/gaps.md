@@ -30,17 +30,19 @@
 | 22 | **同一空数据 bug 还存在于独立页面 `static/bench2.html`**：它加载 `bench2/data-live.js`，其中 `new Date(lastDay+'T00:00:00').toISOString()`（约 59-62 行）与本次修的 `derive.js` 是同一份旧代码 | 本作业的 DoD 只点名 `#bench`（主页面）；`bench2.html` 是旧适配层页面，`index.html` 不加载它。QA 实测该页在空数据下同样报 `读取 /api/benchmark 失败：Invalid time value` | 下次动 `bench2/data-live.js` 时按同样方式给日期兜底；或确认该页已废弃后删除 |
 | 23 | **还有两处旧路径没清、属已知遗留**：`webapp/tk_reverse.py:47` 的 `WB_REVERSE_DIR` 缺省值仍是 `D:/workbuddy_project/tiktok/reverse`（`start.bat` 会覆盖它，但 `wb_start.ps1`、`_serve*.bat`、`start_workbench.vbs` 不设置，所以反推数据落哪取决于用哪个启动方式）；`webapp/README.md` 里仍有多处 `D:\workbuddy_project\tiktok` 的旧命令，还写着并不存在的 `qa\run-all.py`、并把台账写成 15 列（实际 14 列）；根目录两份 README 也没说明 `qa\run-all.ps1` 在本仓库为什么恒红 | 本作业（2026-11-05）只处理根目录两份 README 与启动/测试脚本；`tk_reverse.py` 的默认值属产品代码、改了会移动反推数据落盘位置，需单独决定 | 要么在 `wb_start.ps1`/`_serve*.bat`/`start_workbench.vbs` 里补 `WB_REVERSE_DIR`，要么把 `tk_reverse.py` 的默认值改成仓库内 `reverse\`；`webapp/README.md` 下次动它时顺手改 |
 | 24 | **没有一台真正“干净”的机器**：M1 的“零环境”是用剥离环境模拟的（`PATH` 只留 system32、空 `TEMP`、清空 `WB_*`/`HF_*`/`PYTHON*`、代理黑洞） | 本机是 Windows 11 家庭版，没有 Windows Sandbox、没有 Hyper-V，开不了干净虚拟机 | 交付前必须在**你的第二台电脑**上双击一次（M3 DoD 6 就是这条，只能你做） |
-| 25 | **Windows 10 未验证** | 只有本机 Win11 26200 一台机器 | 有一台 Win10 的机器时跑一次 `启动工作台.bat` + `/api/health` |
-| 26 | **“不需要管理员权限”未验证** | 本机账户是管理员，模拟不出标准用户 | 在普通账户的机器上双击一次，或用 `runas /user:<标准用户> cmd` 起一个会话再跑 |
-| 27 | **完整反推（含 LLM 翻译/复刻）不在验收范围** | 需要可用的 LLM key 与联网；包里不带 key | 用户自己配 key 后手工试一次；M2 只验“本地视频抽帧用包内 ffmpeg” |
-| 28 | **两条既有红测试仍在**：`image_ledger` 基线 `FAILED (errors=3)`（`load_secuid` 过期桩）、`lease_owner` 3 条 `_assert_playable` | 都是别的作业遗留的过期桩/旧断言，与本次改动无关 | 下一个作业单独修桩；本文件第 18 条已记过一次 |
-| 29 | **`id="appVersion"` 在 M1 不存在** | 页面版本号由 M3 的 T-25 做 | M3 收尾时把 `qa\T-15` 的 `DEFERRED-M3` 那一行变绿 |
-| 30 | **首次冷启动 3.5~5.9 秒，受杀软扫描影响** | 576 MB 新包第一次执行时 Defender 实时扫描；同一副本稳态 1.63~1.68 秒 | CRD-0005 已把门槛改成“首次 ≤8 秒、稳态 ≤3 秒”；更慢的机器上首次若超 8 秒要记录 |
-| 31 | **`lease_owner.test.py` 在 GBK 控制台下直接跑会 `UnicodeEncodeError`** | 它用 `✓/✗` 打印，本机 stdout 默认 GBK，第一次失败就崩、没有汇总行 | 跑它时设 `PYTHONIOENCODING=utf-8`（`qa\run-all.ps1` 已设） |
-| 32 | **一个工作台实例 = 2 个 pythonw 进程**（父与子都是 `_boot.py`，监听的是子进程） | 机制在 `_boot.py`/uvicorn，不在本次改动范围 | 清理时按“监听 pid + 同端口所有 `_boot.py` 进程”一起停；QA 用例已这么写 |
-| 33 | **`accounts.json` 顶层的 `xlsx` 字段仍是绝对路径** | T-27 只归一账号的 `out_dir`/`audio_dir`；台账路径有 `ledger_path()`/`list_ledgers()` 兜底扫 `WB_LEDGER_DIR` | 换目录后如台账列表为空，重启一次即可；彻底修属另一个作业 |
-| 34 | **真实写入失败（磁盘满 / ACL 拒绝）没验** | Windows 上造这两种场景要改 ACL 或塞满磁盘，风险高 | T-17 只验了“`create_ledger` 返回失败 → 恰好 1 条 `[FAIL]` + 退出 1”这条契约分支 |
-| 35 | **包内 `ctranslate2` 首次 import 会打印 `pkg_resources is deprecated` 警告** | `setuptools<81` 已钉住，只是警告不是错误 | 不影响功能；下次升级 setuptools 时再看 |
+| 24a | **“干净机器”上还有四件事没验**：目标机是否缺 VC++ 运行库、杀软是否拦 `python.exe`/解压、真断网（只用代理黑洞近似）、目标机没有 D 盘时路径是否正常 | 这几项都要另一台机器/另一种系统状态才能造；本机是开发机，装齐了运行库 | 都在 M3 DoD 6 的那台机器上顺带看；VC++ 缺失时 `检查环境.bat` 会打 `[FAIL]` 并点名 DLL |
+| 25 | **Windows 10 未验证** | 只有本机 Win11 26200 一台机器 | 有一台 Win10 的机器时跑一次 `启动工作台.bat` + `/api/health` 200 |
+| 26 | **“不需要管理员权限”未验证** | 本机只有一个管理员账户（当前是过滤令牌 Medium，近似但不等价于标准用户） | 在普通账户的机器上双击一次，或用 `runas /user:<标准用户> cmd` 起会话再跑 |
+| 27 | （范围外，不是缺口）**完整反推含 LLM 翻译/复刻**不在本次验收范围 | PRD「不做什么」已写明：AI 翻译要联网 + 自己的 key | 用户自己配 key 后手工试；M2 只验“本地视频抽帧用包内 ffmpeg” |
+| 28 | **三条既有红测试仍在**：`image_ledger` 基线 `FAILED (errors=3)`（`load_secuid` 过期桩）、`lease_owner` 3 条 `_assert_playable`；另有 `lease_owner` 里 `HF_HUB_OFFLINE=="1"` 那条是**本作业有意改掉的旧行为**，已由 QA 改成「键不存在」并回到 18/21（CRD-0003，提交 `8e8fe32`） | `image_ledger` 与 `_assert_playable` 是别的作业遗留的过期桩；`HF_HUB_OFFLINE` 那条是 ADR-0008 决定的正常变更 | 剩余两条红由下一个作业单独修桩；本作业不再动它们 |
+| 29 | **`id="appVersion"` 在 M1 不存在** | 页面版本号由 M3 的 T-25 做；`qa\T-15` 现在把它标成 `DEFERRED-M3` | **M3 必须删掉 `qa\T-15\run.py` 里那个 `CaseDeferred` 分支、改成 `fail`**（否则 M3 漏做也照样“通过”） |
+| 30 | **首次冷启动 3.46~5.89 秒、稳态 1.63~1.68 秒；门槛改动待用户确认** | 首次那笔主要是 576 MB 新包被 Defender 实时扫描 + 首次建台账（~1 s）+ 冷 import（~3.6 s）；观测点是 `/api/health` 200，浏览器出现页面还要 +0.2~1 s | 门槛已按 CRD-0005 改成「首次 ≤8 s、稳态 ≤3 s」，但**该 CRD 的决定行待用户在 M1 评审确认**；M3 真机验收时记录首次秒数，>8 s 回 CRD 重议 |
+| 31 | （已知行为）`lease_owner.test.py` 在 GBK 控制台下直接跑会 `UnicodeEncodeError`（它用 `✓/✗` 打印） | 本机 stdout 默认 GBK；`qa\run-all.ps1` 已设 `PYTHONIOENCODING=utf-8`，只有绕过它手工直跑才踩 | 跑它时设 `PYTHONIOENCODING=utf-8`；或让该测试自己 `reconfigure(stdout)`（下一个作业顺手做） |
+| 32 | **启动瞬间会短暂看到两个进程**：一个 `python.exe`（启动器 `_launch.py`）和一个 `pythonw.exe`（`_boot.py`，`runpy` 同进程跑 `app.py`）；稳定后只剩 `_boot.py` 那个 | `_launch.py` 起完服务就退出；代码里不会出现“两个 `_boot.py`” | 清理时按“监听 pid + 同端口所有 `_boot.py` 进程”一起停；QA 用例已这么写 |
+| 33 | （已知行为）`accounts.json` 顶层的 `xlsx` 字段仍是绝对路径 | T-27 只归一账号的 `out_dir`/`audio_dir`；台账路径用模块级 `LEDGER_DIR`（来自 `WB_LEDGER_DIR`）扫 `*.xlsx` | 换目录后进程仍指旧路径，**重启一次**即可（`_setenv.bat` 重新设 `WB_LEDGER_DIR`）；彻底修属另一个作业 |
+| 34 | **真实写入失败（磁盘满 / ACL 拒绝）没验** | Windows 上造这两种场景要改 ACL 或塞满磁盘，风险高 | T-17 只验了“`create_ledger` 返回失败 → 恰好 1 条 `[FAIL]` + 退出 1”这条契约分支；坏台账（0 字节/截断）已验且只 WARN |
+| 35 | （已知行为）包内 `ctranslate2` 首次 import 会打印 `pkg_resources is deprecated` 警告 | `setuptools<81` 已钉住，警告来源是 `ctranslate2` 自身 | 不影响功能；升级 setuptools 时再看 |
+| 36 | **用户目录判据的覆盖面缩小了**：从“整个 `%USERPROFILE%`/`%APPDATA%` 不新增文件”缩到三个定点（`.workbuddy`、`.cache\huggingface`、`%APPDATA%\tiktok-workbench`）+ 顶层条目集合 | 原判据在本机不可判（后台程序静置 20 秒新增约 160 个文件，观测自 QA 会话、未留测量脚本）；`%LOCALAPPDATA%` 与 `%TEMP%` 不在覆盖内 | M1 评审向用户说明；想加强就再加一条“三个目录的第一层条目集合不新增”（零成本，可判） |
 
 作业收尾时复核本表：已闭环的行删除，本文件只留仍然成立的缺口。
 

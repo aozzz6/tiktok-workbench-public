@@ -8,7 +8,7 @@ DoD 来源：`docs/tasks/tasks.md` v2 的 T-14（DoD 1~6）。
   · 复用工程师的两个单测（T14-01/04/05），并**独立**核对"单测没有缩水"（T14-02）；
   · 独立探针：两个解释器都不存在 → `main()` 返回 1 且打印找过的路径（T14-03，把 `_launch.py`
     复制到没有 `.venv` 的临时目录再跑——在 webapp 目录里跑会回落到真 venv，验不到这一条）；
-  · 独立静态核对 `_setenv.bat` 的 12+6 行、WB_HOME 单反斜杠、无条件覆盖、PATH 顺序、
+  · 独立静态核对 `_setenv.bat` 的 13+7=20 行、WB_HOME 单反斜杠、无条件覆盖、PATH 顺序、
     入口 call 关系、纯 ASCII、无绝对路径（T14-06~12）——**不读工程师的解析函数**；
   · 独立 `cmd /c` 反例：用户机残留被无条件覆盖（T14-13）；
   · 契约表 ↔ bat 逐行核对（T14-14，§2 表转录在下面，文档在时再与文档核对一次）；
@@ -57,8 +57,10 @@ TPL_TEST = PKG / "tests" / "templates.test.py"
 DOC_LAUNCHER = Path(r"C:\Users\94453\AppData\Local\Temp\dsh-crew\d-tiktok-workbench"
                     r"\portable-package\docs\design\api\launcher-runtime.md")
 
-# 契约 §2 的 18 行（2026-11-05 从 launcher-runtime.md §2 转录：变量 → "set 值" / "清空"）。
-# 转录成常量是为了：作业结束后文档家会被删掉，本用例仍然能核对 bat 有没有漂。
+# 契约的 20 行（2026-11-05 从 launcher-runtime.md 转录：变量 → "set 值" / "清空"；
+# 安全修复后新增 PYTHONNOUSERSITE=1、PYTHONUSERBASE=空）。
+# 文档在场时以**文档现表**为准（_doc_contract_rows 全文件扫）；这份常量只是文档家被删后的兜底，
+# 这样作业结束后本用例仍然能核对 bat 有没有漂。
 DOC_CONTRACT = {
     "WB_ROOT": ("set", "%~dp0"),
     "PY": ("set", "%WB_ROOT%python\\python.exe"),
@@ -72,8 +74,10 @@ DOC_CONTRACT = {
     "HF_HOME": ("set", "%WB_ROOT%models\\hf"),
     "PATH": ("set", "%WB_ROOT%python;%WB_ROOT%ffmpeg\\bin;%PATH%"),
     "PYTHONIOENCODING": ("set", "utf-8"),
+    "PYTHONNOUSERSITE": ("set", "1"),   # 安全修复：不 import 用户 site-packages
     "PYTHONPATH": ("clear", ""),
     "PYTHONHOME": ("clear", ""),
+    "PYTHONUSERBASE": ("clear", ""),
     "HF_HUB_CACHE": ("clear", ""),
     "HUGGINGFACE_HUB_CACHE": ("clear", ""),
     "XDG_CACHE_HOME": ("clear", ""),
@@ -359,9 +363,9 @@ def t14_05():
 # ────────────────────────── T14-06 ~ 12：独立静态核对 ──────────────────────────
 SET_NAMES = ["WB_ROOT", "PY", "WB_PYTHON", "WB_PYTHONW", "WB_PIPELINE_DIR", "WB_HOME",
              "WB_LEDGER_DIR", "WB_REVERSE_DIR", "WB_LOG_DIR", "HF_HOME", "PATH",
-             "PYTHONIOENCODING"]
-CLEAR_NAMES = ["PYTHONPATH", "PYTHONHOME", "HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE",
-               "XDG_CACHE_HOME", "HF_HUB_OFFLINE"]
+             "PYTHONIOENCODING", "PYTHONNOUSERSITE"]
+CLEAR_NAMES = ["PYTHONPATH", "PYTHONHOME", "PYTHONUSERBASE", "HF_HUB_CACHE",
+               "HUGGINGFACE_HUB_CACHE", "XDG_CACHE_HOME", "HF_HUB_OFFLINE"]
 SET_RE = re.compile(r'^set "([A-Za-z_][A-Za-z0-9_]*)=(.*)"$')
 
 
@@ -391,7 +395,7 @@ def _parse_setenv(text):
 
 
 def t14_06():
-    """DoD 2(a)：恰好 12 条设值 + 6 条清空 = 18 行，名字一个不多一个不少、无重复。"""
+    """DoD 2(a)：恰好 13 条设值 + 7 条清空 = 20 行，名字一个不多一个不少、无重复。"""
     text = _read(SETENV)
     sets, clears, bad = _parse_setenv(text)
     assert_(not bad, f"有不是裸赋值的 set 行：{bad}")
@@ -400,10 +404,14 @@ def t14_06():
     assert_(sorted(n for _, n in clears) == sorted(CLEAR_NAMES),
             f"清空变量不符：实得 {sorted(n for _, n in clears)}")
     total_lines = len(sets) + len(clears)
-    assert_(total_lines == 18, f"应 12+6=18 行，实得 {len(sets)}+{len(clears)}={total_lines}")
+    assert_(len(sets) == len(SET_NAMES) and len(clears) == len(CLEAR_NAMES) and total_lines == 20,
+            f"应 13+7=20 行，实得 {len(sets)}+{len(clears)}={total_lines}")
+    # 安全修复的取值也要钉住：PYTHONNOUSERSITE=1（不 import 用户 site-packages）
+    assert_(sets.get("PYTHONNOUSERSITE", (0, ""))[1] == "1",
+            f"PYTHONNOUSERSITE 设值应为 '1'，实得 {sets.get('PYTHONNOUSERSITE')!r}")
     rows = [f"set  {n} = {sets[n][1]}  (L{sets[n][0]})" for n in SET_NAMES]
     rows += [f"clear {n}  (L{idx})" for idx, n in clears]
-    return [f"12 设值 + 6 清空 = {total_lines} 行，无重复、无多余"] + rows
+    return [f"13 设值 + 7 清空 = {total_lines} 行，无重复、无多余（PYTHONNOUSERSITE=1）"] + rows
 
 
 def t14_07():
@@ -478,12 +486,20 @@ def t14_10():
              if re.match(r'^\s*if\s+exist\s+"%~dp0_setenv\.local\.bat"\s+call\s+"%~dp0_setenv\.local\.bat"',
                          ln, re.IGNORECASE)]
     assert_(guard, "_setenv.bat 里没有带 if exist 守卫的 call _setenv.local.bat")
-    effective = [ln.strip() for ln in text.splitlines()
+    effective = [(i + 1, ln.strip()) for i, ln in enumerate(text.splitlines())
                  if ln.strip() and not ln.strip().lower().startswith("rem ")
                  and not ln.strip().startswith("::") and ln.strip().lower() != "@echo off"]
-    assert_("_setenv.local.bat" in effective[-1],
-            f"call _setenv.local.bat 不是最后一条有效语句：{effective[-1]!r}")
-    evidence.append(f"_setenv.bat: L{guard[0]} 带 if exist 守卫 call local，且是最后一条有效语句")
+    assert_(len(effective) >= 2, f"_setenv.bat 有效语句太少：{effective}")
+    last_no, last_line = effective[-1]
+    prev_no, prev_line = effective[-2]
+    assert_(last_line.lower() == "exit /b 0",
+            f"最后一条有效语句必须是 'exit /b 0'（把调用前的旧 errorlevel 清成 0，"
+            f"否则入口 bat 会误报加载失败），实得 L{last_no}: {last_line!r}")
+    assert_(re.match(r'^if\s+exist\s+"%~dp0_setenv\.local\.bat"\s+call\s+"%~dp0_setenv\.local\.bat"$',
+                     prev_line, re.IGNORECASE),
+            f"'exit /b 0' 之前必须紧跟带 if exist 守卫的 call _setenv.local.bat，"
+            f"实得 L{prev_no}: {prev_line!r}")
+    evidence.append(f"_setenv.bat: L{prev_no} 守卫 call local → L{last_no} exit /b 0（最后一条有效语句）")
     evidence.append(f"_setenv.bat 对自己 call 的行数 = 0")
     return evidence
 
@@ -558,47 +574,77 @@ def t14_13():
 
 
 # ────────────────────────── T14-14：契约表 ↔ bat ──────────────────────────
-def _runtime_section(text):
-    """只取 launcher-runtime.md 的 §2 表（§3 的入口表里也有 `_setenv.bat`，不能一起扫）。"""
-    m = re.search(r"(?ms)^##\s*2\..*?(?=^##\s)", text)
-    if m:
-        return m.group(0)
-    m = re.search(r"(?ms)^##\s*2\..*", text)
-    return m.group(0) if m else ""
+ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
 
-def _parse_runtime_contract(text):
-    """从 launcher-runtime.md §2 的表里抽 (变量 → ('set'|'clear'|'name', 文档值))。"""
-    rows = {}
-    for raw in _runtime_section(text).splitlines():
+def _doc_contract_rows(text):
+    """从契约文档里抽 (变量 → (kind, value, 所在小节))，并返回 (rows, notes)。
+
+    全文件扫表格行、不只看 §2：本轮文档把新增的两行粘到了文件最开头（连 H1 标题都被吃进
+    第 3 行），§2 表里反而没有。内容是契约的一部分，位置异常必须**报出来**，但不能因此漏掉
+    真实契约行。§3 的入口表（首列是 `.bat` 名）靠"首列必须是环境变量名"筛掉。
+    """
+    section = "（文件开头，标题之前）"
+    found = []
+    for raw in text.splitlines():
         line = raw.strip()
+        if line.startswith("## "):
+            section = line[3:].strip()
+            continue
         if not line.startswith("|") or line.startswith("|---") or "变量" in line:
             continue
         cells = [c.strip() for c in line.strip("|").split("|")]
         if len(cells) < 2 or not cells[0].startswith("`"):
             continue
         name = cells[0].strip("`").strip()
+        if not ENV_NAME_RE.match(name):
+            continue
         who = cells[1]
         if "_setenv.bat" not in who:
             continue
         m = re.search(r"[=＝：:]\s*(`([^`]+)`|空)", who)
         if not m:
-            rows[name] = ("name", "")
-            continue
-        if m.group(1) == "空":
-            rows[name] = ("clear", "")
+            kind, value = "name", ""
+        elif m.group(1) == "空":
+            kind, value = "clear", ""
         else:
-            rows[name] = ("set", m.group(2).strip())
-    return rows
+            kind, value = "set", m.group(2).strip()
+        found.append((section, name, kind, value))
+
+    rows, notes = {}, []
+    for section, name, kind, value in found:
+        in_section2 = section.startswith("2.")
+        if name in rows:
+            if rows[name][:2] != (kind, value):
+                notes.append(f"CONFLICT {name}: 文档里两处写法不一致（{rows[name][:2]!r} vs "
+                             f"{(kind, value)!r}，小节「{section}」）")
+            else:
+                notes.append(f"{name}: 在「{section}」有重复行（与已收录的一致，不影响判据）")
+            continue
+        rows[name] = (kind, value, section)
+        if not in_section2:
+            notes.append(f"{name}: 契约行不在 §2，而在「{section}」")
+    return rows, notes
 
 
 def t14_14():
-    """DoD 4：launcher-runtime.md §2 里"谁设置=_setenv.bat"的每一行与 bat 实际一致。"""
+    """DoD 4：契约表里"谁设置=_setenv.bat"的每一行与 bat 实际一致（文档在场以文档现表为准）。"""
     sets, clears, _ = _parse_setenv(_read(SETENV))
     clear_names = {n for _, n in clears}
-    evidence = []
+    notes = []
+    if DOC_LAUNCHER.is_file():
+        rows, notes = _doc_contract_rows(_read(DOC_LAUNCHER))
+        source = f"文档现表 launcher-runtime.md（{len(rows)} 行）"
+        assert_(rows, f"文档里解析不到任何『谁设置=_setenv.bat』的行：{DOC_LAUNCHER}")
+        assert_(not [n for n in notes if n.startswith("CONFLICT")],
+                f"文档自身前后矛盾：{notes}")
+    else:
+        rows = {name: (kind, value, "run.py 内转录")
+                for name, (kind, value) in DOC_CONTRACT.items()}
+        source = f"run.py 内转录的契约（文档家不在，{len(rows)} 行）"
+    evidence = [f"契约来源：{source}"]
     mismatches = []
-    for name, (kind, doc_value) in DOC_CONTRACT.items():
+    for name, (kind, doc_value, _section) in rows.items():
         if name in sets:
             actual = ("set", sets[name][1])
         elif name in clear_names:
@@ -611,26 +657,20 @@ def t14_14():
         else:
             ok = actual[0] == kind and (kind != "set" or actual[1] == doc_value)
             doc_text = kind + (f"={doc_value}" if doc_value else "")
-        evidence.append(f"{name}: 文档 {doc_text} / bat {actual[0]}"
+        evidence.append(f"{name}: 契约 {doc_text} / bat {actual[0]}"
                         f"{'=' + actual[1] if actual[1] else ''} / {'一致' if ok else '不一致'}")
         if not ok:
             mismatches.append(name)
     assert_(not mismatches, f"契约表与 bat 不一致：{mismatches}")
-    extra = sorted((set(sets) | {n for _, n in clears}) - set(DOC_CONTRACT))
+    extra = sorted((set(sets) | clear_names) - set(rows))
     assert_(not extra, f"bat 里有契约表没写的变量：{extra}")
-    if DOC_LAUNCHER.is_file():
-        doc_rows = _parse_runtime_contract(_read(DOC_LAUNCHER))
-        assert_(doc_rows, f"文档 §2 里解析不到任何『谁设置=_setenv.bat』的行：{DOC_LAUNCHER}")
-        assert_(set(doc_rows) == set(DOC_CONTRACT),
-                f"文档 §2 的行与转录不一致：文档多 {sorted(set(doc_rows) - set(DOC_CONTRACT))}、"
-                f"少 {sorted(set(DOC_CONTRACT) - set(doc_rows))}")
-        for name, (kind, doc_value) in DOC_CONTRACT.items():
-            assert_(doc_rows[name] == (kind, doc_value),
-                    f"文档里 {name} 写的是 {doc_rows[name]!r}，转录是 {(kind, doc_value)!r}")
-        evidence.append(f"文档在场（{DOC_LAUNCHER.name} §2）：与转录逐行一致，共 {len(doc_rows)} 行")
-    else:
-        evidence.append(f"NOTE：{DOC_LAUNCHER} 不在（作业结束后文档家会删），本条按转录核对 bat")
-    return evidence[:3] + [f"契约合计 {len(DOC_CONTRACT)} 行：12 设值 + 6 清空，全部一致"]
+    missing = sorted(set(rows) - (set(sets) | clear_names))
+    assert_(not missing, f"契约表里有 bat 没写的变量：{missing}")
+    n_set = sum(1 for k, _v, _s in rows.values() if k in ("set", "name"))
+    n_clear = sum(1 for k, _v, _s in rows.values() if k == "clear")
+    evidence += [f"NOTE：{n}" for n in notes]
+    evidence.append(f"契约合计 {len(rows)} 行（{n_set} 设值 + {n_clear} 清空），与 bat 全部一致")
+    return evidence
 
 
 # ────────────────────────── T14-15 / 16：起停 ──────────────────────────
@@ -715,11 +755,11 @@ CASES = [
     ("T14-03", "两个解释器都不存在 → main() 返回 1 且打印找过的两个路径（独立探针）", t14_03),
     ("T14-04", "--restart 的该不该杀：三状态只有本工作台 kill、命令只带一个 pid", t14_04),
     ("T14-05", "templates 单测通过（templates.test.py 退出 0）", t14_05),
-    ("T14-06", "_setenv.bat 恰好 12 条设值 + 6 条清空 = 18 行，名字一个不多一个不少", t14_06),
+    ("T14-06", "_setenv.bat 恰好 13 条设值 + 7 条清空 = 20 行，名字一个不多一个不少", t14_06),
     ("T14-07", "WB_HOME 逐字是 %WB_ROOT%workbuddy（单反斜杠）", t14_07),
     ("T14-08", "无条件覆盖：无 if not defined，每个 set 都是裸赋值", t14_08),
     ("T14-09", "PATH 精确值/顺序：python < ffmpeg\\bin < %PATH%", t14_09),
-    ("T14-10", "四个入口都 call _setenv.bat；它不自 call、只带守卫 call local 且在最后", t14_10),
+    ("T14-10", "四个入口都 call _setenv.bat；它不自 call、守卫 call local 之后紧跟 exit /b 0", t14_10),
     ("T14-11", "五个 .bat 每字节 < 0x80", t14_11),
     ("T14-12", "_setenv.bat 不含盘符绝对路径 / C:\\Users / /home/", t14_12),
     ("T14-13", "cmd /c 反例：用户机残留的 WB_HOME/WB_LEDGER_DIR/WB_REVERSE_DIR 被包内值覆盖", t14_13),
