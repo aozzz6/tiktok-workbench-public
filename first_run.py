@@ -37,26 +37,137 @@
 """
 from __future__ import annotations
 
-import argparse
 import json
 import os
-import shutil
-import socket
 import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-PIPE = ROOT / "pipeline"
-WEBAPP = ROOT / "webapp"
+# ★ 2026-11-05（T-17 收尾）：顶层**只** import 三个启动期最轻的模块。
+#   `--portable --init-only` 每次双击启动都会跑，它要是把 argparse / pathlib /
+#   shutil / socket（更别说 openpyxl）拖进来，冷启动就白花 0.1~0.2 秒。
+#   实测（包内 python，importtime 累计）：argparse ≈21 ms、pathlib ≈31 ms、
+#   shutil ≈30 ms、socket ≈20 ms、openpyxl ≈990 ms（冷）。所以：
+#     · 快路径（文件都在）只用 os/json/sys；
+#     · pathlib / argparse 在 `_init_paths()` / `main()` 里按需 import；
+#     · shutil / socket 在各自的检查函数里按需 import；
+#     · openpyxl 只在真的要建台账时 import（create_ledger 内部）。
+_HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = None      # Path：`_init_paths()` 里赋值（非快路径才会走到）
+PIPE = None
+WEBAPP = None
 
 OK, WARN, FAIL = "[ OK ]", "[WARN]", "[FAIL]"
 
 # 表头必须与 webapp\config.py 的 EXPECTED_COLS 逐字一致（T-17 的用例守着这条；
-# 这里不 import config：那条路会做代理探测与 mkdir，`--init-only` 的 < 2 秒预算不能花在它上面）。
+# 这里不 import config：那条路会做代理探测与 mkdir，`--init-only` 的预算不能花在它上面）。
 COLS = ["记录日期", "对标账号", "视频发布时间", "视频标题", "话题标签",
         "视频链接/ID", "商品链接", "播放量", "点赞数", "评论数",
         "转发数", "收藏数", "音频", "翻译"]
 WIDTHS = [14, 14, 18, 42, 30, 38, 32, 10, 10, 10, 10, 10, 40, 40]
+
+
+def _init_paths() -> None:
+    """非快路径才建 Path 常量（import pathlib 本身有成本，快路径不付）。
+
+    `Path` 也挂成模块全局：下面的辅助函数（hf_hub_dirs / find_example /
+    first_run_log_path ……）都在非快路径上才被调用。
+    """
+    global ROOT, PIPE, WEBAPP, Path
+    from pathlib import Path          # noqa: F811 —— 故意延后到非快路径
+    ROOT = Path(_HERE)
+    PIPE = ROOT / "pipeline"
+    WEBAPP = ROOT / "webapp"
+
+
+def _default_pipe() -> str:
+    return os.environ.get("WB_PIPELINE_DIR") or os.path.join(_HERE, "pipeline")
+
+
+def _default_ledger() -> str:
+    return os.environ.get("WB_LEDGER_DIR") or os.path.join(_HERE, "ledger")
+
+
+_FAST_SWITCHES = ("--portable", "--no-network")
+
+
+def _fast_init_args(argv: list[str]) -> dict | None:
+    """只认启动器实际用的那一小组参数，且只认 `--init-only`（非 dry-run）。
+
+    任何没见过的写法（`-h`、拼错、缺值……）都返回 None，交给真正的 argparse ——
+    这样错误信息与退出码和以前完全一致，快路径只是"认得出的那一种形状"的捷径。
+    """
+    opts = {"init_only": False, "dry_run": False, "pipeline_dir": None, "ledger_dir": None}
+    i = 0
+    n = len(argv)
+    while i < n:
+        a = argv[i]
+        if a == "--init-only":
+            opts["init_only"] = True
+        elif a == "--dry-run":
+            opts["dry_run"] = True
+        elif a in _FAST_SWITCHES:
+            pass
+        elif a.startswith("--pipeline-dir="):
+            opts["pipeline_dir"] = a.split("=", 1)[1]
+        elif a.startswith("--ledger-dir="):
+            opts["ledger_dir"] = a.split("=", 1)[1]
+        elif a in ("--pipeline-dir", "--ledger-dir"):
+            if i + 1 >= n:
+                return None                       # 缺值 → 让 argparse 报错
+            opts["pipeline_dir" if a == "--pipeline-dir" else "ledger_dir"] = argv[i + 1]
+            i += 1
+        else:
+            return None
+        i += 1
+    if not opts["init_only"] or opts["dry_run"]:
+        return None
+    return opts
+
+
+def _find_xlsx(ledger_dir: str) -> bool:
+    """ledger 目录里有没有真正的 xlsx（跳过 Excel 的 ~$ 锁文件和子目录）。"""
+    try:
+        with os.scandir(ledger_dir) as it:
+            for e in it:
+                try:
+                    if e.name.startswith("~$") or not e.name.lower().endswith(".xlsx"):
+                        continue
+                    if e.is_file():
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        return False
+    return False
+
+
+def _package_ready(pipe_dir: str, ledger_dir: str) -> bool:
+    """`--init-only` 的快路径判据：目录齐 + 台账在 + accounts.json 可解析。
+
+    全为真 → 这一次启动无事可做，直接返回 0（不输出、不建文件、不 import 重库）。
+    任何一条不满足都返回 False，走原来的完整路径（该补的补、该写日志的写日志）。
+    """
+    data_dir = os.path.join(_HERE, "webapp", "data")
+    for d in (pipe_dir, ledger_dir, os.path.join(pipe_dir, "output"),
+              os.path.join(pipe_dir, "reports"), data_dir):
+        if not os.path.isdir(d):
+            return False
+
+    acc_path = os.path.join(pipe_dir, "accounts.json")
+    if not os.path.isfile(acc_path):
+        return False
+    try:
+        with open(acc_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        return False                       # 坏了 → 走完整路径，让它写进 first-run.log
+    if not isinstance(cfg, dict):
+        return False
+
+    if _find_xlsx(ledger_dir):
+        return True
+    # ledger 目录里没有 xlsx，但 accounts.json 指到别处一本真实存在的台账也算就绪
+    configured = str(cfg.get("xlsx") or "").strip()
+    return bool(configured) and os.path.isfile(configured)
 
 
 def _line(flag: str, text: str) -> None:
@@ -93,6 +204,7 @@ def check_venv(name: str, path: Path, create_hint: str) -> bool:
 
 
 def check_ffmpeg() -> bool:
+    import shutil                     # 按需：快路径不该付这个 import 的钱
     exe = shutil.which("ffmpeg")
     if exe:
         _line(OK, f"ffmpeg：{exe}")
@@ -115,6 +227,7 @@ def detect_proxy(scripts: Path | None = None) -> str:
 
 
 def check_proxy(proxy: str, portable: bool = False) -> bool:
+    import socket                     # 按需
     if not proxy:
         _line(WARN if portable else FAIL,
               "没探测到本机代理（抓取 TikTok 需要；只看看板/转写可以不管）")
@@ -134,6 +247,7 @@ def check_proxy(proxy: str, portable: bool = False) -> bool:
 
 def check_tiktok(proxy: str, timeout: int = 20) -> bool:
     """优先用 curl（与抓取层的 TLS 行为接近）；没有 curl 再退回 urllib。"""
+    import shutil
     import subprocess
 
     curl = shutil.which("curl")
@@ -451,6 +565,20 @@ def append_first_run_log(problems: list[tuple[str, str]]) -> Path | None:
 
 # ────────────────────────── 入口 ──────────────────────────
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    # ── 每次启动的快路径（在 import argparse/pathlib 之前判断）──────────
+    #   文件都在 → 无事可做：零输出、零写入、只碰 os/json/sys。
+    quick = _fast_init_args(argv)
+    if quick is not None:
+        pipe_arg = quick["pipeline_dir"] or _default_pipe()
+        ledger_arg = quick["ledger_dir"] or _default_ledger()
+        if _package_ready(pipe_arg, ledger_arg):
+            return 0
+
+    import argparse                       # 按需：快路径不该付这个 import 的钱
+    _init_paths()                         # 顺带把 pathlib 的 Path 挂成模块全局
+
     ap = argparse.ArgumentParser(description="TikTok 对标工作台 · 新机自检与初始化")
     ap.add_argument("--dry-run", action="store_true", help="只检查，不写文件")
     ap.add_argument("--ledger-dir", default=None,

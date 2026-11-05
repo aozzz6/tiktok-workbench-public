@@ -200,6 +200,51 @@ def case_second_run_keeps():
 check("二次运行不覆盖：手改的单元格与自加账号都还在（且 mtime 不变）", case_second_run_keeps)
 
 
+# ── 2b. 每次启动的快路径：文件都在时只许用最小标准库 ───────────────────
+def case_fast_path_min_imports():
+    """`--init-only` 每次启动都会跑，所以「文件都在」时要做成零动作快路径。
+
+    判据（T-17 收尾）：这一次不许 import openpyxl（只有真建台账才用）、
+    也不许 import argparse / socket / shutil / pathlib 这些启动期重库；
+    不打印任何东西、不动任何文件。用 `-X importtime` 看子进程真实 import 了谁。
+    """
+    t = tmpdir("fast")
+    pipe, ledger_dir = t / "pipeline", t / "ledger"
+    rc, out, _el = run_first_run(
+        ["--portable", "--init-only", "--pipeline-dir", pipe, "--ledger-dir", ledger_dir])
+    assert_(rc == 0, f"第一次 init-only 应退出 0，实得 {rc}；输出尾：{out[-500:]}")
+    acc = pipe / "accounts.json"
+    xlsx = ledger_dir / "tiktok_对标.xlsx"
+    assert_(acc.is_file() and xlsx.is_file(), "第一次应建出 accounts.json 与台账")
+    before = (acc.stat().st_mtime_ns, xlsx.stat().st_mtime_ns)
+
+    # 第二次：所有文件都在 → 走快路径；用 -X importtime 记录真实 import
+    p = subprocess.run(
+        [PY, "-X", "importtime", str(ROOT / "first_run.py"), "--portable", "--init-only",
+         "--pipeline-dir", str(pipe), "--ledger-dir", str(ledger_dir)],
+        cwd=str(ROOT), capture_output=True, timeout=120, env=base_env())
+    err = (p.stderr or b"").decode("utf-8", "replace")
+    stdout = (p.stdout or b"").decode("utf-8", "replace")
+    assert_(p.returncode == 0, f"快路径退出码应为 0，实得 {p.returncode}；stderr 尾：{err[-500:]}")
+
+    heavy = []
+    for line in err.splitlines():
+        if line.strip().startswith("import time") and "|" in line:
+            mod = line.split("|")[-1].strip()
+            if mod.split(".")[0] in {"openpyxl", "argparse", "socket", "shutil", "pathlib"}:
+                heavy.append(mod)
+    assert_(not heavy, f"快路径 import 了启动期重库：{heavy[:8]}")
+    assert_(stdout.strip() == "", f"快路径不该有任何输出，实得：{stdout[:300]!r}")
+
+    after = (acc.stat().st_mtime_ns, xlsx.stat().st_mtime_ns)
+    assert_(before == after, "快路径动了已有文件（mtime 变了）")
+    assert_(not (t / "logs" / "first-run.log").exists(), "快路径不该写 first-run.log")
+
+
+check("快路径（文件都在）：只 import 最小标准库，不碰 openpyxl/argparse/socket/shutil/pathlib",
+      case_fast_path_min_imports)
+
+
 # ── 3. 不联网：两个网络入口打桩成抛异常，计数必须为 0 ────────────────
 def case_no_network():
     import socket
