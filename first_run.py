@@ -123,15 +123,37 @@ def _fast_init_args(argv: list[str]) -> dict | None:
     return opts
 
 
+def _xlsx_ok(path) -> bool:
+    """这本 xlsx 真能当台账用吗？（安全评审：不能只看"文件存在"）
+
+    `openpyxl` 的 `wb.save()` 不是原子写：进程被杀会留下 0 字节或截断的 xlsx。
+    那种文件如果被当成"台账已就绪"，快路径会零输出静默返回 0，而看板打不开
+    台账 → 用户拿不到任何线索。判据（都只读文件头尾，毫秒级）：
+      ① 大小 > 0；② 开头是 ZIP 魔数 `PK\\x03\\x04`；
+      ③ 结尾附近有 ZIP 的 End of Central Directory `PK\\x05\\x06`（截断文件没有）。
+    """
+    try:
+        size = os.path.getsize(path)
+        if size <= 0:
+            return False
+        with open(path, "rb") as f:
+            if f.read(4) != b"PK\x03\x04":
+                return False
+            f.seek(max(0, size - 1024))
+            return b"PK\x05\x06" in f.read()      # 中央目录结束记录：完整 ZIP 才有
+    except OSError:
+        return False
+
+
 def _find_xlsx(ledger_dir: str) -> bool:
-    """ledger 目录里有没有真正的 xlsx（跳过 Excel 的 ~$ 锁文件和子目录）。"""
+    """ledger 目录里有没有**可用**的 xlsx（跳过 ~$ 锁文件；0 字节/截断的算没有）。"""
     try:
         with os.scandir(ledger_dir) as it:
             for e in it:
                 try:
                     if e.name.startswith("~$") or not e.name.lower().endswith(".xlsx"):
                         continue
-                    if e.is_file():
+                    if e.is_file() and _xlsx_ok(e.path):
                         return True
                 except OSError:
                     continue
@@ -165,13 +187,29 @@ def _package_ready(pipe_dir: str, ledger_dir: str) -> bool:
 
     if _find_xlsx(ledger_dir):
         return True
-    # ledger 目录里没有 xlsx，但 accounts.json 指到别处一本真实存在的台账也算就绪
+    # ledger 目录里没有可用 xlsx，但 accounts.json 指到别处一本真实、完整的台账也算就绪
     configured = str(cfg.get("xlsx") or "").strip()
-    return bool(configured) and os.path.isfile(configured)
+    return bool(configured) and _xlsx_ok(configured)
 
 
 def _line(flag: str, text: str) -> None:
     print(f"{flag} {text}")
+
+
+def _mask_proxy(proxy: str) -> str:
+    """打印代理用：去掉 `user:pass@` 凭据，只留 `scheme://host:port`。
+
+    有些代理要认证，`WB_PROXY`/`HTTPS_PROXY` 里就会带 userinfo；`检查环境.bat`
+    会把代理打到屏幕上，那会跟着截图/求助贴一起泄露。**没有 userinfo 时原样返回**，
+    所以正常地址的输出跟以前一字不差。
+    """
+    s = str(proxy or "")
+    if "@" not in s:
+        return s
+    scheme, sep, rest = s.partition("://")
+    if sep:
+        return scheme + sep + rest.rsplit("@", 1)[-1]     # 最后一个 @ 才是 userinfo 的边界
+    return s.rsplit("@", 1)[-1]
 
 
 # ────────────────────────── 检查 ──────────────────────────
@@ -238,10 +276,11 @@ def check_proxy(proxy: str, portable: bool = False) -> bool:
     host, port = parts.hostname or "127.0.0.1", parts.port or 80
     try:
         with socket.create_connection((host, port), timeout=1.5):
-            _line(OK, f"代理可用：{proxy}")
+            _line(OK, f"代理可用：{_mask_proxy(proxy)}")      # 打印前去掉 user:pass@
             return True
     except OSError:
-        _line(WARN, f"探测到 {proxy}，但端口连不上：代理软件没启动？或设 WB_PROXY 指定端口")
+        _line(WARN, f"探测到 {_mask_proxy(proxy)}，但端口连不上："
+                    "代理软件没启动？或设 WB_PROXY 指定端口")
         return False
 
 
@@ -375,17 +414,46 @@ def read_accounts(pipe: Path) -> tuple[dict, str | None]:
         return {}, f"{exc.__class__.__name__}: {exc}"
 
 
-def find_ledger(accounts: dict, ledger_dir: Path) -> Path | None:
+def _ledger_candidates(accounts: dict, ledger_dir: Path) -> list[Path]:
+    """候选台账：accounts.json 指的那本 + ledger 目录里的 *.xlsx（跳过 ~$ 锁文件）。"""
+    out: list[Path] = []
+    seen: set[Path] = set()
+
+    def add(p: Path) -> None:
+        try:
+            if p.name.startswith("~$") or not p.is_file() or p in seen:
+                return
+        except OSError:
+            return
+        seen.add(p)
+        out.append(p)
+
     raw = str(accounts.get("xlsx") or "").strip()
     if raw:
-        configured = Path(raw)
-        if configured.is_file():
-            return configured
+        add(Path(raw))
     if ledger_dir.is_dir():
-        files = sorted(ledger_dir.glob("*.xlsx"))
-        if files:
-            return files[0]
+        try:
+            for f in sorted(ledger_dir.glob("*.xlsx")):
+                add(f)
+        except OSError:
+            pass
+    return out
+
+
+def find_ledger(accounts: dict, ledger_dir: Path) -> Path | None:
+    """找一本**能用**的台账（0 字节 / 截断 / 非 ZIP 的都不算）。"""
+    for p in _ledger_candidates(accounts, ledger_dir):
+        if _xlsx_ok(p):
+            return p
     return None
+
+
+def find_broken_ledgers(accounts: dict, ledger_dir: Path) -> list[Path]:
+    """存在但不可用的台账（0 字节 / 截断 / 不是 xlsx）。
+
+    绝不覆盖它们，只把名字报出去 —— 覆盖等于毁掉用户手里唯一那份数据。
+    """
+    return [p for p in _ledger_candidates(accounts, ledger_dir) if not _xlsx_ok(p)]
 
 
 def create_ledger(path: Path) -> tuple[bool, str]:
@@ -484,7 +552,8 @@ def init_package(pipe: Path, ledger_dir: Path, webapp: Path, dry: bool,
                  quiet: bool = False) -> list[tuple[str, str]]:
     """只创建缺失的目录/台账/accounts.json。返回 [(kind, message)]，空 = 全就绪。
 
-    kind ∈ {dirs, ledger, accounts, accounts_parse}；调用方决定打 [FAIL] 还是写日志。
+    kind ∈ {dirs, ledger, accounts, accounts_parse, ledger_broken}；
+    `ledger_broken` 是"只报不修"的告警（坏台账绝不覆盖），调用方要打 [WARN] 而不是 [FAIL]。
     """
     def info(text: str) -> None:
         if not quiet:
@@ -510,7 +579,22 @@ def init_package(pipe: Path, ledger_dir: Path, webapp: Path, dry: bool,
         info(f"{OK} 台账：{ledger}")
     else:
         target = ledger_dir / "tiktok_对标.xlsx"
-        if dry:
+        broken = find_broken_ledgers(accounts, ledger_dir)
+        if broken:
+            # 0 字节 / 截断的台账（openpyxl 非原子写的产物）：**只报不覆盖**，
+            # 让用户知道该删哪一个、以及删了之后重启会自动重建。
+            b = broken[0]
+            try:
+                size = b.stat().st_size
+            except OSError:
+                size = -1
+            more = f"（另有 {len(broken) - 1} 本同样不可用）" if len(broken) > 1 else ""
+            problems.append((
+                "ledger_broken",
+                f"台账文件损坏或为空：{b}（{size} 字节）{more} —— 工作台打不开它。"
+                f" 删掉这个文件后重新启动会自动重建模板；或用 --ledger-dir 指向另一本台账。"
+                f"（这里不会覆盖它）"))
+        elif dry:
             info(f"{WARN} 台账不存在，将创建：{target}")
         else:
             ok, why = create_ledger(target)
@@ -637,8 +721,15 @@ def main(argv: list[str] | None = None) -> int:
 
     print("-" * 62)
     problems = init_package(pipe, ledger_dir, WEBAPP, a.dry_run)
-    for _kind, msg in problems:
-        _line(FAIL, msg)
+    # `ledger_broken` 是"只报不修"的告警：坏台账绝不覆盖，只让用户知道去删哪个。
+    # 它不算阻塞（检查环境.bat 的 [FAIL] 预算仍然只有三类），但必须打在屏幕上。
+    fatal: list[tuple[str, str]] = []
+    for kind, msg in problems:
+        if kind == "ledger_broken":
+            _line(WARN, msg)
+        else:
+            _line(FAIL, msg)
+            fatal.append((kind, msg))
 
     cookie = pipe / "cc_cookie.txt"
     if cookie.is_file():
@@ -648,8 +739,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print("-" * 62)
     if a.portable:
-        if problems:
-            print(f"\n有 {len(problems)} 项阻塞问题，先按上面的提示处理再继续。")
+        if fatal:
+            print(f"\n有 {len(fatal)} 项阻塞问题，先按上面的提示处理再继续。")
             return 1
         print("\n环境检查通过。")
         return 0
@@ -658,7 +749,7 @@ def main(argv: list[str] | None = None) -> int:
     print("  1) 启动看板：webapp\\start.bat 或 webapp\\.venv\\Scripts\\python.exe webapp\\app.py")
     print("  2) 浏览器打开 http://127.0.0.1:8789 ，点「＋ 新增账号」加真账号（面向地区/语言按国家填）")
     print("  3) 放台账/跑一键运行；首次转写会下载 whisper 模型（国内先设 HF_ENDPOINT）")
-    blocking += len(problems)
+    blocking += len(fatal)             # ledger_broken 只告警，不改变退出码
     if blocking:
         print(f"\n有 {blocking} 项阻塞问题，先按上面的提示装好再继续。")
         return 1

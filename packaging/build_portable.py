@@ -11,7 +11,9 @@ Usage (repo root; `--ffmpeg-dir` is required on this machine - see contract §7)
     webapp\\.venv\\Scripts\\python.exe packaging\\build_portable.py --flavor slim
         --ffmpeg-dir "<dir containing ffmpeg.exe and ffprobe.exe>"
 
-Exit codes: 0 = built, 1 = input / environment / content check failed.
+Exit codes: 0 = built, 1 = input / environment / content check failed,
+2 = refused or unsafe invocation (`--out` outside the allowed places, a stage
+without our marker) - nothing is deleted in that case.
 Every failure prints one last line `[FAIL] <reason>`; the half-built stage is
 kept on purpose so it can be inspected, but `build-info.json` and
 `licenses/PYTHON-PACKAGES.txt` are only written when every check passed.
@@ -19,12 +21,14 @@ kept on purpose so it can be inspected, but `build-info.json` and
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +47,35 @@ VC_DLLS = (
 )
 
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+
+# Stage marker: only a directory carrying this file may be deleted and rebuilt.
+# A mistaken `--out` can therefore never wipe an unrelated folder (security review).
+STAGE_MARKER = ".build-portable-stage"
+
+# Never ship credentials / local secrets, whatever they are called.
+SECRET_NAME_GLOBS = (
+    ".env", ".env.*", "*.pem", "*.key", "*cookie*", "*token*", "*secret*",
+)
+
+# Post-build scan of the packaged text files.  Patterns are deliberately
+# strict (length-prefixed, word-boundary guarded) so ordinary words such as
+# "task-", "risk-" or the UI placeholder "sk-..." cannot trip the build.
+SECRET_PATTERNS = (
+    ("OpenAI/DeepSeek key (sk-…)", re.compile(r"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{16,}")),
+    ("AWS access key (AKIA…)", re.compile(r"(?<![A-Z0-9])AKIA[0-9A-Z]{16}")),
+    ("bot token (BOT_…)", re.compile(r"(?<![A-Za-z0-9_])BOT_[A-Za-z0-9_]{10,}")),
+    ("Slack bot token (xoxb-…)", re.compile(r"xoxb-[0-9]{6,}")),
+    ("private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+)
+SECRET_SCAN_SUFFIXES = {
+    ".py", ".pyw", ".js", ".mjs", ".cjs", ".ts", ".json", ".md", ".txt",
+    ".bat", ".cmd", ".ps1", ".vbs", ".html", ".htm", ".css", ".yml", ".yaml",
+    ".toml", ".ini", ".cfg", ".env", ".example", ".csv", ".log", ".svg",
+}
+# Third-party / toolchain trees: not our text, thousands of files, no secrets
+# of ours can live there (they are covered by the name blacklist anyway).
+SECRET_SCAN_SKIP_TOP = ("python", "ffmpeg")
+SECRET_SCAN_MAX_BYTES = 2 * 1024 * 1024
 
 # stdlib pieces that must not travel with the package (contract §5.2)
 STDLIB_DROP = (
@@ -101,6 +134,10 @@ class BuildError(Exception):
     """Anything that must end the build with exit code 1."""
 
 
+class UsageError(Exception):
+    """A refused or unsafe invocation: exit code 2, nothing is touched."""
+
+
 # ── small helpers ────────────────────────────────────────────────────
 def mb(num: int) -> str:
     return f"{num / (1024 * 1024):.1f} MB"
@@ -140,6 +177,12 @@ def remove_path(path: Path) -> None:
 
 def should_drop_dir(name: str) -> bool:
     return bool(GLOBAL_DROP_DIR_RE.match(name))
+
+
+def is_forbidden_name(name: str) -> bool:
+    """Credentials and local secrets never travel, whatever they are called."""
+    low = name.lower()
+    return any(fnmatch.fnmatchcase(low, pattern) for pattern in SECRET_NAME_GLOBS)
 
 
 # ── argument / input validation ──────────────────────────────────────
@@ -254,6 +297,79 @@ def read_version(repo: Path) -> str:
     return text
 
 
+def _is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def resolve_out_root(args, repo: Path) -> Path:
+    """Refuse any `--out` that could delete somebody else's data.
+
+    Allowed: inside `<repo>/build`, or inside the system temp directory.
+    Everything else (drive root, the repo itself, the user profile, a system
+    folder, a project folder, ...) is refused with exit code 2 before anything
+    is touched.
+    """
+    raw = args.out
+    candidate = Path(raw).expanduser() if raw else repo / "build" / "portable"
+    resolved = candidate.resolve()
+    repo_res = repo.resolve()
+    build_root = (repo_res / "build").resolve()
+    temp_root = Path(tempfile.gettempdir()).resolve()
+    home_root = Path.home().resolve()
+
+    if resolved.parent == resolved:
+        raise UsageError(
+            f"拒绝 --out {resolved}：这是盘符根目录，构建会删掉它下面的 slim/ full/。"
+            "允许的只有 <仓库>\\build 之下或系统临时目录之下。"
+        )
+    if resolved == repo_res or resolved in repo_res.parents:
+        raise UsageError(
+            f"拒绝 --out {resolved}：这是仓库本身或它的上级目录（构建会删掉整个仓库）。"
+            "允许的只有 <仓库>\\build 之下或系统临时目录之下。"
+        )
+    if _is_within(resolved, build_root):
+        return resolved
+    if _is_within(resolved, temp_root):
+        return resolved
+    if resolved == home_root or _is_within(resolved, home_root):
+        raise UsageError(
+            f"拒绝 --out {resolved}：位于用户主目录下（用户数据）。"
+            "允许的只有 <仓库>\\build 之下或系统临时目录之下。"
+        )
+    raise UsageError(
+        f"拒绝 --out {resolved}：不在允许的两个位置之内。"
+        "允许的只有 <仓库>\\build 之下或系统临时目录之下。"
+    )
+
+
+def scan_stage_secrets(stage: Path) -> list[tuple[str, str]]:
+    """Return [(relative path, what)] for packaged text files holding a credential."""
+    hits: list[tuple[str, str]] = []
+    for path in sorted(stage.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(stage)
+        if rel.parts and rel.parts[0] in SECRET_SCAN_SKIP_TOP:
+            continue
+        if path.suffix.lower() not in SECRET_SCAN_SUFFIXES:
+            continue
+        try:
+            if path.stat().st_size > SECRET_SCAN_MAX_BYTES:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for label, pattern in SECRET_PATTERNS:
+            if pattern.search(text):
+                hits.append((rel.as_posix(), label))
+                break
+    return hits
+
+
 def probe_ffmpeg(bin_dir: Path) -> dict:
     exe = bin_dir / "ffmpeg.exe"
     tail = ""
@@ -283,52 +399,111 @@ def probe_ffmpeg(bin_dir: Path) -> dict:
 
 
 # ── tree copying ─────────────────────────────────────────────────────
+def _skip_entry(child: Path, *, top: bool, drop_names, drop_globs, drop_suffixes) -> bool:
+    """One decision point for every copy, shared by the copier and the parity check.
+
+    `drop_names` ("data", "tests", "README.md", ...) is a *top-level* list: it
+    describes the repository's own directories, not names that may also occur
+    inside a media/asset tree.  Applying it at every depth is what once dropped
+    `webapp/static/prompt_v2/README.md` (code review).  `top` decides that.
+    """
+    name = child.name
+    if top and name in drop_names:
+        return True
+    # __pycache__ is a cache, never content: excluded at every depth (contract §6).
+    if name == "__pycache__":
+        return True
+    if should_drop_dir(name) or is_forbidden_name(name):
+        return True
+    if drop_globs and any(child.match(pat) for pat in drop_globs):
+        return True
+    if child.is_file():
+        if name.endswith(GLOBAL_DROP_SUFFIXES):
+            return True
+        if drop_suffixes and name.endswith(drop_suffixes):
+            return True
+    return False
+
+
 def copy_webapp(src: Path, dst: Path) -> None:
     dst.mkdir(parents=True, exist_ok=True)
     for child in sorted(src.iterdir()):
-        name = child.name
-        if name in WEBAPP_DROP_NAMES or should_drop_dir(name):
-            continue
-        if any(child.match(pat) for pat in WEBAPP_DROP_GLOBS):
+        if _skip_entry(child, top=True, drop_names=WEBAPP_DROP_NAMES,
+                       drop_globs=WEBAPP_DROP_GLOBS, drop_suffixes=()):
             continue
         if child.is_dir():
-            _copy_filtered(child, dst / name, WEBAPP_DROP_NAMES, WEBAPP_DROP_GLOBS, ())
-        elif name.endswith(GLOBAL_DROP_SUFFIXES):
-            continue
+            # Deeper levels: suffixes / temp dirs / credential names only.
+            _copy_filtered(child, dst / child.name, WEBAPP_DROP_GLOBS, ())
         else:
-            shutil.copy2(child, dst / name)
+            shutil.copy2(child, dst / child.name)
 
 
 def copy_pipeline(src: Path, dst: Path) -> None:
     dst.mkdir(parents=True, exist_ok=True)
     for child in sorted(src.iterdir()):
-        name = child.name
-        if name in PIPELINE_DROP_NAMES or should_drop_dir(name):
+        if _skip_entry(child, top=True, drop_names=PIPELINE_DROP_NAMES,
+                       drop_globs=(), drop_suffixes=PIPELINE_DROP_SUFFIXES):
             continue
         if child.is_dir():
-            _copy_filtered(child, dst / name, PIPELINE_DROP_NAMES, (), PIPELINE_DROP_SUFFIXES)
-        elif name.endswith(PIPELINE_DROP_SUFFIXES) or name.startswith(PIPELINE_DROP_SUFFIXES):
-            continue
-        elif name.endswith(GLOBAL_DROP_SUFFIXES):
-            continue
+            _copy_filtered(child, dst / child.name, (), PIPELINE_DROP_SUFFIXES)
         else:
-            shutil.copy2(child, dst / name)
+            shutil.copy2(child, dst / child.name)
 
 
-def _copy_filtered(src: Path, dst: Path, drop_names, drop_globs, drop_suffixes) -> None:
+def _copy_filtered(src: Path, dst: Path, drop_globs, drop_suffixes) -> None:
     dst.mkdir(parents=True, exist_ok=True)
     for child in sorted(src.iterdir()):
-        name = child.name
-        if name in drop_names or should_drop_dir(name):
-            continue
-        if drop_globs and any(child.match(pat) for pat in drop_globs):
+        if _skip_entry(child, top=False, drop_names=(),
+                       drop_globs=drop_globs, drop_suffixes=drop_suffixes):
             continue
         if child.is_dir():
-            _copy_filtered(child, dst / name, drop_names, drop_globs, drop_suffixes)
-        elif name.endswith(GLOBAL_DROP_SUFFIXES) or (drop_suffixes and name.endswith(drop_suffixes)):
-            continue
+            _copy_filtered(child, dst / child.name, drop_globs, drop_suffixes)
         else:
-            shutil.copy2(child, dst / name)
+            shutil.copy2(child, dst / child.name)
+
+
+def expected_static_files(repo: Path) -> set[str]:
+    """Files under `webapp/static` that the exclusion rules must keep.
+
+    Built by replaying the very same `_skip_entry` decisions used by the copy,
+    so the parity check below cannot drift away from the real behaviour.
+    """
+    src = repo / "webapp" / "static"
+    kept: set[str] = set()
+    if not src.is_dir():
+        return kept
+
+    def walk(directory: Path, prefix: str, top: bool) -> None:
+        for child in sorted(directory.iterdir()):
+            if _skip_entry(child, top=top, drop_names=WEBAPP_DROP_NAMES,
+                           drop_globs=WEBAPP_DROP_GLOBS, drop_suffixes=()):
+                continue
+            name = f"{prefix}{child.name}"
+            if child.is_dir():
+                walk(child, name + "/", False)
+            else:
+                kept.add(name)
+
+    walk(src, "", True)
+    return kept
+
+
+def check_static_parity(repo: Path, stage: Path) -> int:
+    """Assert the packaged frontend assets are not silently short of the repo."""
+    src_root = repo / "webapp" / "static"
+    if not src_root.is_dir():
+        return 0
+    expected = expected_static_files(repo)
+    dst_root = stage / "webapp" / "static"
+    actual = ({p.relative_to(dst_root).as_posix() for p in dst_root.rglob("*") if p.is_file()}
+              if dst_root.is_dir() else set())
+    missing = sorted(expected - actual)
+    if missing:
+        raise BuildError(
+            f"webapp\\static 比仓库少 {len(missing)} 个文件（例如 {missing[0]}）："
+            "排除规则把页面资源丢了，用户在页面上只会看到 404"
+        )
+    return len(expected)
 
 
 def copy_python(python_home: Path, stage: Path) -> None:
@@ -545,8 +720,18 @@ def build_one(flavor: str, repo: Path, out_root: Path, args, version: str) -> di
     print(f"\n== {flavor} ==")
     print(f"[1/9] 清空并重建 stage：{stage}")
     if stage.exists():
+        # Security review: never rmtree a directory this script did not create.
+        if not (stage / STAGE_MARKER).is_file():
+            raise UsageError(
+                f"拒绝重建 {stage}：目录里没有 {STAGE_MARKER} 标记，"
+                "它看起来不是本脚本建出来的 stage（不会删别人的数据）。"
+            )
         shutil.rmtree(stage)
     stage.mkdir(parents=True)
+    (stage / STAGE_MARKER).write_text(
+        f"built by packaging/build_portable.py for {APP_NAME} {version} "
+        f"({flavor}); safe to delete/rebuild\n",
+        encoding="utf-8", newline="\n")
 
     python_home = resolve_python_home(args)
     ffmpeg_dir = resolve_ffmpeg_dir(args, repo)
@@ -616,6 +801,8 @@ def build_one(flavor: str, repo: Path, out_root: Path, args, version: str) -> di
 
     print("[9/9] 校验")
     check_no_venv(stage)
+    static_files = check_static_parity(repo, stage)
+    print(f"      静态资源：{static_files} 个文件与仓库逐一对应（不含排除项）")
     if not args.skip_deps:
         check_imports(stage)
         site_bytes = dir_bytes(stage / "python" / "Lib" / "site-packages")
@@ -632,6 +819,15 @@ def build_one(flavor: str, repo: Path, out_root: Path, args, version: str) -> di
         raise BuildError(
             f"整包未压缩 {mb(unpacked)} 超过上限 {mb(limit)}（{flavor}）"
         )
+
+    secret_hits = scan_stage_secrets(stage)
+    if secret_hits:
+        detail = "；".join(f"{path}（{what}）" for path, what in secret_hits[:5])
+        raise BuildError(
+            f"包里发现疑似凭据，拒绝出包：{detail}"
+            + (f"；共 {len(secret_hits)} 个文件" if len(secret_hits) > 5 else "")
+        )
+    print(f"      凭据扫描：未命中（{len(SECRET_NAME_GLOBS)} 条文件名黑名单已生效）")
 
     packages = write_python_packages(stage)
     info = {
@@ -675,16 +871,30 @@ def build_one(flavor: str, repo: Path, out_root: Path, args, version: str) -> di
 def main(argv=None) -> int:
     args = parse_args(argv)
     repo = Path(__file__).resolve().parents[1]
-    out_root = Path(args.out) if args.out else repo / "build" / "portable"
     flavors = ["slim", "full"] if args.flavor == "both" else [args.flavor]
     started = time.time()
     try:
         version = read_version(repo)
+        out_root = resolve_out_root(args, repo)
         out_root.mkdir(parents=True, exist_ok=True)
         for flavor in flavors:
             build_one(flavor, repo, out_root, args, version)
+    except UsageError as exc:
+        print(f"[FAIL] {exc}")
+        return 2
     except BuildError as exc:
         print(f"[FAIL] {exc}")
+        return 1
+    except subprocess.SubprocessError as exc:
+        # TimeoutExpired (pip install 7200 s, ffmpeg -version, import checks) is
+        # not an OSError; without this the contract's "last line is [FAIL] …"
+        # was replaced by a traceback (code review).
+        what = getattr(exc, "cmd", None) or exc
+        timeout = getattr(exc, "timeout", None)
+        if timeout is not None:
+            print(f"[FAIL] 超时（{timeout} 秒）：{what}")
+        else:
+            print(f"[FAIL] 子进程失败：{what}")
         return 1
     except OSError as exc:
         print(f"[FAIL] 文件操作失败：{exc}")

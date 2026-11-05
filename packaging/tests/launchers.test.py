@@ -116,6 +116,17 @@ def _restart_tokens():
     assert_("%~1" in launch[0], f"启动行没有把端口 %~1 传给 launcher：{launch[0]!r}")
 
 
+def _restart_port_quoted():
+    """代码评审（T-18）：`%~1` 必须加引号 —— 拖文件到 bat 上、或参数含 `&` 时，
+    不加引号会被 cmd 当命令分隔符。`_launch.py` 的 restart_target() 把空/非数字参数
+    当"不带端口"，所以引号不影响行为。"""
+    launch = [ln for ln in read_text(RESTART).splitlines()
+              if "_launch.py" in ln and not ln.strip().lower().startswith("rem")]
+    assert_(len(launch) == 1, f"重启工作台.bat 里执行 _launch.py 的行应恰好 1 行，实得 {len(launch)}")
+    assert_('--restart "%~1"' in launch[0],
+            f'--restart 的端口参数必须写成 --restart "%~1"（带引号），实得 {launch[0].strip()!r}')
+
+
 def _restart_delegates_kill():
     text = read_text(RESTART)
     assert_("taskkill" not in text.lower(),
@@ -146,13 +157,34 @@ def _referenced_scripts_exist():
     assert_((REPO / "first_run.py").is_file(), "仓库里没有 first_run.py")
 
 
+def _assert_setlocal_first(path: Path):
+    """安全评审（T-18）：入口必须 `setlocal`，否则 `call _setenv.bat` 的赋值会漏进调用者的
+    cmd 会话（PATH 被永久前置包目录、PYTHONPATH/PYTHONHOME 被清空）。"""
+    lines = [ln.strip() for ln in read_text(path).splitlines() if ln.strip()]
+    assert_(lines and lines[0].lower() == "@echo off", f"{path.name} 第一行不是 @echo off：{lines[:2]!r}")
+    assert_(len(lines) > 1 and lines[1].lower() == "setlocal",
+            f"{path.name} 第二行（@echo off 之后）必须是 setlocal，实得 "
+            f"{lines[1] if len(lines) > 1 else '<空>'!r}")
+    setenv_at = next((i for i, ln in enumerate(lines)
+                      if "_setenv.bat" in ln and not ln.lower().startswith("rem")), None)
+    assert_(setenv_at is not None, f"{path.name} 没有 call _setenv.bat")
+    assert_(1 < setenv_at, f"{path.name} 的 setlocal 必须在 call _setenv.bat 之前")
+
+
+def _setlocal_first():
+    for path in (RESTART, CHECK_ENV):
+        _assert_setlocal_first(path)
+
+
 print("[1] 静态契约（DoD 1 / DoD 2）")
 check("两个入口 .bat 都存在", _both_exist)
 check("两个入口每字节 < 0x80（纯 ASCII）", _ascii_only)
 check('两个入口都 call "%~dp0_setenv.bat"', _calls_setenv)
+check("两个入口第二行是 setlocal（且在 call _setenv.bat 之前）", _setlocal_first)
 check("四个文件都不含盘符绝对路径 / C:\\Users / /home/", _no_abs_paths)
 check("两个入口都不含 runas / net session / Start-Process -Verb", _no_admin)
 check("重启工作台.bat 含 webapp\\_launch.py + --restart，并把 %~1 传给 launcher", _restart_tokens)
+check('重启工作台.bat 的端口参数带引号：--restart "%~1"', _restart_port_quoted)
 check("重启工作台.bat 不自己 taskkill（杀进程交给 _launch.py）", _restart_delegates_kill)
 check("检查环境.bat 含 first_run.py / --portable / --no-network / pause / exit /b", _checkenv_tokens)
 check("检查环境.bat：first_run → 记 RC → 无条件 pause → exit /b %RC%", _checkenv_exit_code)
@@ -257,6 +289,22 @@ assert_(_port_free(LIVE_PORT), f"端口 {LIVE_PORT} 已被占用，无法实跑�
 for peer in PEER_PORTS:
     if not _port_free(peer):
         print(f"  注意：{peer} 上有服务（不是本用例起的），本用例只碰 {LIVE_PORT}")
+
+
+def _package_entries_setlocal():
+    """包内那两份才是用户真正双击的：模板改了但没重跑构建，旧包会继续漏环境变量/旧参数写法。"""
+    for name in ("重启工作台.bat", "检查环境.bat"):
+        path = PKG / name
+        assert_(path.is_file(), f"包里缺 {name}（先重跑构建）")
+        _assert_setlocal_first(path)
+    pkg_restart = next(ln for ln in read_text(PKG / "重启工作台.bat").splitlines()
+                       if "_launch.py" in ln and not ln.strip().lower().startswith("rem"))
+    assert_('--restart "%~1"' in pkg_restart,
+            f'包内副本的 --restart 端口参数没带引号（旧包？先重跑构建）：{pkg_restart.strip()!r}')
+
+
+check("包内两个入口与模板同契约（setlocal + --restart 带引号；旧包会红，先重跑构建）",
+      _package_entries_setlocal)
 
 
 def _restart_on_package():

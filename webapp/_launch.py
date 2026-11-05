@@ -64,9 +64,23 @@ RESTART_BAT = resolve_restart_bat(PKG_ROOT, BASE)
 # 而 8790 是「token余额监控」app.py、8788 是它的 monitor.py —— 都不能当成工作台。
 PORTS = [8789, 8791, 8792, 8793, 8787]
 READY_TIMEOUT = 45.0
-# 等就绪时的轮询间隔。0.6s 会让冷启动最坏白等 0.6 秒（M1 要求双击到 ready ≤5 秒）；
+# 等就绪时的轮询间隔。0.6s 会让启动最坏白等 0.6 秒（M1 指标：首次 ≤8 s / 稳态 ≤3 s，CRD-0005）；
 # health 请求本身只有毫秒级开销，0.15s 足够便宜。
 READY_POLL = 0.15
+
+
+def _system32(exe: str) -> str:
+    """System32 下系统工具的**绝对路径**。
+
+    安全评审：Windows 的 CreateProcess 会先找 exe 所在目录和当前目录（双击时=包根，
+    用户可写），包根放一个同名 exe 就能劫持 netstat/taskkill。所以一律走绝对路径。
+    """
+    root = os.environ.get("SystemRoot") or os.environ.get("WINDIR") or "C:\\Windows"
+    return os.path.join(root, "System32", exe)
+
+
+NETSTAT = _system32("netstat.exe")
+TASKKILL = _system32("taskkill.exe")
 
 # 工作台 health 的指纹：ok + ts + diagnostics(pipeline_dir/ledger_files)。
 # 只认 "ok": true 会把 token余额监控（返回 db/upstream + ok）当成工作台。
@@ -87,7 +101,7 @@ def _listening(port: int, timeout: float = 0.25) -> bool:
 
     超时故意压到 0.25s：在某些 Windows 配置下，连接一个已关闭的本机端口不会立刻
     refused，而是等满超时。probe() 每轮要扫 5 个端口，1.5s 的超时会拖成 7.5s
-    （M1 要求双击到 ready ≤5 秒）。真正有人监听时 connect 是毫秒级返回，不受影响。
+    （启动指标：首次 ≤8 s / 稳态 ≤3 s，CRD-0005）。真正有人监听时 connect 是毫秒级返回，不受影响。
     """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(timeout)
@@ -179,28 +193,35 @@ def restart_target(argv):
     """解析 `--restart [PORT]`：返回 (是否重启, 端口或 None)。
 
     `--restart 8792` / `--restart=8792` → (True, 8792)；`--restart` → (True, None)。
-    端口不是数字时按"不带端口"处理（照旧扫描候选）。
+    端口必须是 0 < PORT < 65536；越界/非数字按"不带端口"处理（照旧扫描候选），
+    否则 `_bindable(99999)` 会抛 OverflowError。
     """
+    def _valid(value: str):
+        if value.isdigit():
+            port = int(value)
+            if 0 < port < 65536:
+                return port
+        return None
+
     args = list(argv)
     for index, token in enumerate(args):
         token = str(token)
         if token == "--restart":
             if index + 1 < len(args):
-                nxt = str(args[index + 1])
-                if nxt.isdigit():
-                    return True, int(nxt)
+                port = _valid(str(args[index + 1]))
+                if port is not None:
+                    return True, port
             return True, None
         if token.startswith("--restart="):
-            value = token.split("=", 1)[1]
-            return True, int(value) if value.isdigit() else None
+            return True, _valid(token.split("=", 1)[1])
     return False, None
 
 
 def listener_pid(port: int):
-    """监听在该端口的进程 pid；读不到就返回 None。只按端口取，不按进程名扫。"""
+    """监听在该端口的进程 pid；读不到就返回 None。只认 LISTENING 行，只按端口取。"""
     try:
         proc = subprocess.run(
-            ["netstat", "-ano", "-p", "tcp"],
+            [NETSTAT, "-ano", "-p", "tcp"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=15,
         )
@@ -208,8 +229,12 @@ def listener_pid(port: int):
         return None
     for line in (proc.stdout or "").splitlines():
         parts = line.split()
+        # 行格式：TCP  local  foreign  STATE  PID。只认 LISTENING，
+        # 否则 TIME_WAIT 的 pid=0 会被当成结果。
         if (len(parts) >= 5 and parts[0].upper() == "TCP"
-                and parts[1].endswith(":" + str(port)) and parts[-1].isdigit()):
+                and parts[1].endswith(":" + str(port))
+                and any(part.upper() == "LISTENING" for part in parts[3:-1])
+                and parts[-1].isdigit()):
             return int(parts[-1])
     return None
 
@@ -218,7 +243,7 @@ def restart_plan(port: int, state: str, pid) -> dict:
     """纯函数：--restart 在这个端口上该不该杀、杀谁。
 
     state 是 probe() 的三态。只有"本工作台"且拿得到监听 pid 才产生 kill；
-    命令里只有一个 pid，绝不按进程名批量杀。
+    命令里只有一个 pid，绝不按进程名批量杀。工具走 System32 绝对路径。
     """
     if state != "workbench" or not pid:
         return {"port": port, "kill": False, "pid": None, "command": None}
@@ -226,7 +251,7 @@ def restart_plan(port: int, state: str, pid) -> dict:
         "port": port,
         "kill": True,
         "pid": int(pid),
-        "command": ["taskkill", "/PID", str(int(pid)), "/T", "/F"],
+        "command": [TASKKILL, "/PID", str(int(pid)), "/T", "/F"],
     }
 
 

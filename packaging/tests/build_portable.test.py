@@ -18,6 +18,8 @@
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import re
@@ -38,6 +40,9 @@ for _stream in (sys.stdout, sys.stderr):
 HERE = Path(__file__).resolve().parent          # packaging/tests
 PKG = HERE.parent                                # packaging
 REPO = PKG.parent                                # 仓库根
+if str(PKG) not in sys.path:
+    sys.path.insert(0, str(PKG))
+import build_portable as bp                      # noqa: E402  被测模块（纯函数级安全用例）
 BUILDER = PKG / "build_portable.py"
 VERSION_FILE = REPO / "VERSION"
 
@@ -116,9 +121,8 @@ def assert_(cond, msg="assert failed"):
 
 # ── 临时目录与假输入 ────────────────────────────────────────────────
 def new_tmp() -> Path:
-    """放在 D:\\ 根下，避开 %TEMP% 里可能存在的超长中文路径。"""
-    base = "D:\\" if Path("D:\\").is_dir() else None
-    return Path(tempfile.mkdtemp(prefix="t15_build_", dir=base))
+    """系统临时目录下（--out 的允许范围之一；安全评审后 build 只接受 build/ 或 temp/）。"""
+    return Path(tempfile.mkdtemp(prefix="t15_build_"))
 
 
 def write(path: Path, data) -> None:
@@ -195,6 +199,19 @@ def run_build(out: Path, home: Path, ffbin: Path, vc: Path, *,
                  "XDG_CACHE_HOME", "HF_HUB_OFFLINE"):
         env.pop(name, None)
     return subprocess.run(cmd, cwd=str(REPO), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=timeout,
+                          env=env)
+
+
+def run_raw(args, timeout: int = 900):
+    """裸跑构建脚本（自己给全套参数），用于 --out 范围与 marker 的拒绝分支。"""
+    env = dict(os.environ)
+    env.pop("WB_FFMPEG_DIR", None)
+    for name in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "HF_HOME",
+                 "XDG_CACHE_HOME", "HF_HUB_OFFLINE"):
+        env.pop(name, None)
+    return subprocess.run([sys.executable, str(BUILDER)] + [str(a) for a in args],
+                          cwd=str(REPO), capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=timeout,
                           env=env)
 
@@ -337,6 +354,95 @@ try:
             assert_(a == b, f"{name} 与 packaging\\templates 不是逐字节相同")
     check("(a) 三个入口 .bat 从 packaging\\templates 逐字节复制", _templates_copied)
 
+    # ── 代码评审 1/2：顶层名单不递归 + 静态资源完整性 ───────────────
+    print("[1d] 代码评审：顶层名单只作用于顶层、static 完整性断言、子进程超时")
+
+    def _deep_names_kept():
+        tmp2 = new_tmp()
+        try:
+            src = tmp2 / "src"
+            write(src / "app.py", "x = 1\n")
+            write(src / "README.md", "顶层的开发者文档，要排\n")
+            write(src / "static" / "sub" / "README.md", "子目录里的说明，要留\n")
+            write(src / "static" / "sub" / "data" / "x.js", "keep()\n")
+            write(src / "data" / "runs.jsonl", "{}\n")
+            write(src / "tests" / "t.js", "1\n")
+            dst = tmp2 / "dst"
+            bp.copy_webapp(src, dst)
+            got = sorted(p.relative_to(dst).as_posix() for p in dst.rglob("*") if p.is_file())
+            want = ["app.py", "static/sub/README.md", "static/sub/data/x.js"]
+            assert_(got == want, f"递归层用错了名单：期望 {want}，实得 {got}")
+        finally:
+            shutil.rmtree(tmp2, ignore_errors=True)
+    check("(c1) 顶层 README.md/data/tests 排除；static/sub 下的同名文件与 data 目录保留",
+          _deep_names_kept)
+
+    def _real_static_kept():
+        repo_file = REPO / "webapp" / "static" / "prompt_v2" / "README.md"
+        assert_(repo_file.is_file(), "前提变了：仓库里没有 webapp/static/prompt_v2/README.md")
+        assert_((STAGE / "webapp" / "static" / "prompt_v2" / "README.md").is_file(),
+                "回归实例：static/prompt_v2/README.md 又被递归规则吃掉了")
+        # 顶层 webapp\data 是要保留的"空数据目录"（运行时才写），但仓库里的运行时文件不许进包
+        assert_((STAGE / "webapp" / "data").is_dir(), "包内应有空的 webapp\\data 数据目录")
+        data_names = sorted(p.name for p in (STAGE / "webapp" / "data").iterdir())
+        assert_(data_names == ["README-data.txt"], f"webapp\\data 里有仓库文件：{data_names}")
+        assert_(not (STAGE / "webapp" / "tests").exists(), "顶层 webapp\\tests 应被排除")
+        expected = len(bp.expected_static_files(REPO))
+        got = sum(1 for p in (STAGE / "webapp" / "static").rglob("*") if p.is_file())
+        assert_(got == expected, f"static 文件数 {got} ≠ 规则应保留的 {expected}")
+    check("(c2) 真实包保留 static/prompt_v2/README.md，static 文件数与规则一致", _real_static_kept)
+
+    def _static_parity_guard():
+        tmp2 = new_tmp()
+        try:
+            fake_repo = tmp2 / "repo"
+            fake_stage = tmp2 / "stage"
+            for root in (fake_repo, fake_stage):
+                write(root / "webapp" / "static" / "a.js", "1\n")
+                write(root / "webapp" / "static" / "sub" / "README.md", "doc\n")
+            assert_(bp.check_static_parity(fake_repo, fake_stage) == 2,
+                    "完整时 check_static_parity 应返回 2")
+            (fake_stage / "webapp" / "static" / "sub" / "README.md").unlink()
+            try:
+                bp.check_static_parity(fake_repo, fake_stage)
+            except bp.BuildError as exc:
+                assert_("README.md" in str(exc), f"报错没点名缺的文件：{exc}")
+            else:
+                raise AssertionError("static 少了文件，构建却没有报错")
+        finally:
+            shutil.rmtree(tmp2, ignore_errors=True)
+    check("(c3) 静态资源缺失 → 构建期断言报错并点名文件", _static_parity_guard)
+
+    def _timeout_reports_fail_line():
+        tmp2 = new_tmp()
+        orig = bp.install_deps
+
+        def boom(*_a, **_k):
+            raise subprocess.TimeoutExpired(cmd=["pip", "install", "--target", "..."], timeout=7200)
+
+        bp.install_deps = boom
+        try:
+            home = make_fake_python_home(tmp2)
+            ffbin = make_fake_ffmpeg(tmp2)
+            vc = make_fake_vcruntime(tmp2)
+            out = tmp2 / "out"
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = bp.main(["--flavor", "slim", "--out", str(out),
+                              "--python-home", str(home), "--ffmpeg-dir", str(ffbin),
+                              "--vcruntime-dir", str(vc)])          # 不给 --skip-deps → 走 install_deps
+            text = buf.getvalue()
+            assert_(rc == 1, f"子进程超时应退 1，实得 {rc}")
+            last = [ln for ln in text.strip().splitlines() if ln.strip()][-1]
+            assert_(last.startswith("[FAIL]") and "超时" in last,
+                    f"最后一行不是 '[FAIL] 超时：…'：{last!r}")
+            assert_("Traceback" not in text, "超时时不应打印 traceback")
+        finally:
+            bp.install_deps = orig
+            shutil.rmtree(tmp2, ignore_errors=True)
+    check("(c4) pip/ffmpeg 超时 → 最后一行 [FAIL] 超时、退出 1、无 traceback",
+          _timeout_reports_fail_line)
+
     # ── --deps-from：离线验证裁剪与许可证清单 ───────────────────────
     print("[1b] --deps-from：*.zip 清掉 / pip* 删掉 / .dist-info 保留 / 生成 PYTHON-PACKAGES.txt")
 
@@ -377,6 +483,87 @@ try:
 
     check("(1b) --deps-from：*.zip 清掉、pip* 删掉、.dist-info 保留、PYTHON-PACKAGES 生成",
           _deps_from_cleanup)
+
+    # ── 安全评审 1/2：凭据黑名单 + 产物扫描 ─────────────────────────
+    print("[1c] 安全：文件名黑名单、产物凭据扫描、命中即拒绝出包")
+
+    def _forbidden_names_dropped():
+        tmp2 = new_tmp()
+        try:
+            src = tmp2 / "src"
+            write(src / ".env", "API_KEY=sk-" + "B" * 24 + "\n")
+            write(src / ".env.local", "X=1\n")
+            write(src / ".env.production", "X=1\n")
+            write(src / "id_rsa.pem", "-----BEGIN PRIVATE KEY-----\n")
+            write(src / "server.key", "k\n")
+            write(src / "cc_cookie.txt", "c\n")
+            write(src / "user_token.json", "{}")
+            write(src / "secret_notes.txt", "s\n")
+            write(src / "app.py", "print(1)\n")
+            write(src / "sub" / ".env.example", "X=1\n")
+            write(src / "sub" / "ok.js", "1\n")
+            dst = tmp2 / "dst"
+            bp.copy_webapp(src, dst)
+            got = sorted(p.relative_to(dst).as_posix() for p in dst.rglob("*") if p.is_file())
+            assert_(got == ["app.py", "sub/ok.js"], f"凭据类文件没被排除，实际复制了 {got}")
+        finally:
+            shutil.rmtree(tmp2, ignore_errors=True)
+    check("(安全 1) .env*/*.pem/*.key/*cookie*/*token*/*secret* 都不进包", _forbidden_names_dropped)
+
+    def _secret_scan_units():
+        tmp2 = new_tmp()
+        try:
+            clean = tmp2 / "clean"
+            write(clean / "a.py", "s = 'task-abc'; t = 'risk-based'\n")
+            write(clean / "ui.js", 'x = "sk-..."\n')          # UI 占位符，不能命中
+            assert_(bp.scan_stage_secrets(clean) == [], "干净目录被误判成有凭据")
+            dirty = tmp2 / "dirty"
+            write(dirty / "conf.py", "KEY = 'sk-" + "a" * 24 + "'\n")
+            hits = bp.scan_stage_secrets(dirty)
+            assert_(hits and hits[0][0] == "conf.py", f"没扫出 sk- 形态的 key：{hits}")
+            for name, text in (("aws.py", 'K = "AKIA' + "A" * 16 + '"'),
+                               ("bot.py", 'T = "BOT_' + "b" * 12 + '"'),
+                               ("slack.py", 'T = "xoxb-1234567890-abc"')):
+                d = tmp2 / ("d_" + name)
+                write(d / name, text + "\n")
+                assert_(bp.scan_stage_secrets(d), f"{name} 里的凭据没扫出来")
+            skipped = tmp2 / "skipped"
+            write(skipped / "python" / "Lib" / "x.py", "sk-" + "a" * 24)
+            assert_(bp.scan_stage_secrets(skipped) == [], "python\\ 树应当跳过扫描")
+        finally:
+            shutil.rmtree(tmp2, ignore_errors=True)
+    check("(安全 2) sk-/AKIA/BOT_/xoxb- 能扫出，task-/risk-/sk-... 不误报", _secret_scan_units)
+
+    def _secret_fails_build():
+        tmp2 = new_tmp()
+        orig = bp.copy_templates
+
+        def leaking(repo, stage):
+            (stage / "leak-note.md").write_text(
+                "token: sk-" + "C" * 24 + "\n", encoding="utf-8")
+            return orig(repo, stage)
+
+        bp.copy_templates = leaking
+        try:
+            out = tmp2 / "out"
+            home = make_fake_python_home(tmp2)
+            ffbin = make_fake_ffmpeg(tmp2)
+            vc = make_fake_vcruntime(tmp2)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = bp.main(["--flavor", "slim", "--out", str(out),
+                              "--python-home", str(home), "--ffmpeg-dir", str(ffbin),
+                              "--vcruntime-dir", str(vc), "--skip-deps"])
+            text = buf.getvalue()
+            assert_(rc == 1, f"带凭据的包应退出 1，实得 {rc}；输出尾：{text[-400:]}")
+            assert_("疑似凭据" in text and "leak-note.md" in text,
+                    f"失败信息没点名文件：{text[-400:]}")
+            assert_(not (out / "slim" / "build-info.json").exists(),
+                    "扫出凭据时不许写 build-info.json")
+        finally:
+            bp.copy_templates = orig
+            shutil.rmtree(tmp2, ignore_errors=True)
+    check("(安全 3) 产物里出现 sk- 形态凭据 → 构建退出 1 并点名文件", _secret_fails_build)
 
     # ── 失败分支 ────────────────────────────────────────────────────
     print("[2] 失败分支")
@@ -444,6 +631,75 @@ try:
         assert_(proc.returncode == 0, f"重建退出码 {proc.returncode}")
         assert_(not marker.exists(), "stage 没有整个重建，上一轮的文件还在")
     check("(h) 重复构建：stage 整个删掉重建，旧文件不残留", _rebuild_wipes)
+
+    # ── 安全评审 2/2：--out 范围与 stage marker（防误删）────────────
+    print("[3] --out 范围与 stage marker（防误删别人的目录）")
+
+    def _out_range():
+        tmp2 = new_tmp()
+        try:
+            home = make_fake_python_home(tmp2)
+            ffbin = make_fake_ffmpeg(tmp2)
+            vc = make_fake_vcruntime(tmp2)
+            base = ["--flavor", "slim", "--python-home", str(home),
+                    "--ffmpeg-dir", str(ffbin), "--vcruntime-dir", str(vc), "--skip-deps"]
+            refused = (("盘符根", Path(REPO).anchor), ("仓库根", REPO), ("用户主目录", Path.home()))
+            for label, target in refused:
+                proc = run_raw(base + ["--out", str(target)])
+                printed = (proc.stdout or "") + (proc.stderr or "")
+                assert_(proc.returncode == 2,
+                        f"{label} --out {target} 应退 2，实得 {proc.returncode}：{printed[-300:]}")
+                assert_("拒绝" in printed, f"{label} 的拒绝理由没打印：{printed[-300:]}")
+            # 允许的两处：<repo>\build 之下、系统临时目录之下
+            in_build = REPO / "build" / "t15-test-out"
+            try:
+                proc = run_raw(base + ["--out", str(in_build)])
+                assert_(proc.returncode == 0,
+                        f"<repo>\\build 之下应允许，实得 {proc.returncode}：{proc.stdout[-300:]}")
+            finally:
+                shutil.rmtree(in_build, ignore_errors=True)
+            proc = run_raw(base + ["--out", str(tmp2 / "out")])
+            assert_(proc.returncode == 0,
+                    f"系统临时目录之下应允许，实得 {proc.returncode}：{proc.stdout[-300:]}")
+        finally:
+            shutil.rmtree(tmp2, ignore_errors=True)
+    check("(安全 4) --out 盘符根 / 仓库根 / 用户主目录 → 退 2；build\\ 与 temp\\ 之下通过", _out_range)
+
+    def _marker_guard():
+        tmp2 = new_tmp()
+        try:
+            home = make_fake_python_home(tmp2)
+            ffbin = make_fake_ffmpeg(tmp2)
+            vc = make_fake_vcruntime(tmp2)
+            base = ["--flavor", "slim", "--python-home", str(home),
+                    "--ffmpeg-dir", str(ffbin), "--vcruntime-dir", str(vc), "--skip-deps"]
+            out = tmp2 / "out"
+            proc = run_raw(base + ["--out", str(out)])
+            assert_(proc.returncode == 0, f"首次构建应成功：{proc.stdout[-300:]}")
+            stage = out / "slim"
+            assert_((stage / bp.STAGE_MARKER).is_file(), "stage 根上没有 marker")
+            write(stage / "stale.txt", "上一轮\n")
+            proc = run_raw(base + ["--out", str(out)])
+            assert_(proc.returncode == 0, f"有 marker 时应允许重建：{proc.stdout[-300:]}")
+            assert_(not (stage / "stale.txt").exists(), "有 marker 时旧文件没被清掉")
+            # 去掉 marker：拒绝，且一个字节都不许删
+            write(stage / "precious.txt", "别删我\n")
+            (stage / bp.STAGE_MARKER).unlink()
+            proc = run_raw(base + ["--out", str(out)])
+            printed = (proc.stdout or "") + (proc.stderr or "")
+            assert_(proc.returncode == 2, f"没有 marker 应退 2，实得 {proc.returncode}")
+            assert_(bp.STAGE_MARKER in printed, f"拒绝理由没点名 marker：{printed[-300:]}")
+            assert_((stage / "precious.txt").is_file(), "没有 marker 时仍然删了目录内容！")
+            # 一个从来不是 stage 的同名目录：同样拒绝、同样保留
+            out2 = tmp2 / "out2"
+            (out2 / "slim").mkdir(parents=True)
+            write(out2 / "slim" / "keep.txt", "别人的数据\n")
+            proc = run_raw(base + ["--out", str(out2)])
+            assert_(proc.returncode == 2, f"外来目录应退 2，实得 {proc.returncode}")
+            assert_((out2 / "slim" / "keep.txt").is_file(), "外来目录被删了！")
+        finally:
+            shutil.rmtree(tmp2, ignore_errors=True)
+    check("(安全 5) 没有 marker 的目录拒删；有 marker 才重建；外来目录内容保留", _marker_guard)
 
     # ── DoD 17 的扫描断言 ───────────────────────────────────────────
     def _no_abs_literals():

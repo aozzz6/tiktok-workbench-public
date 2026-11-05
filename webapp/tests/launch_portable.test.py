@@ -261,7 +261,8 @@ def _plan_workbench():
     assert_(plan["pid"] == 4321, f"pid={plan['pid']!r}")
     cmd = plan["command"]
     assert_(isinstance(cmd, list) and cmd, f"command={cmd!r}")
-    assert_(cmd[0].lower() == "taskkill", f"command[0]={cmd[0]!r}")
+    assert_(os.path.isabs(cmd[0]) and os.path.basename(cmd[0]).lower() == "taskkill.exe",
+            f"taskkill 必须用 System32 绝对路径，实得 command[0]={cmd[0]!r}")
     pids = [token for token in cmd if str(token).isdigit()]
     assert_(pids == ["4321"], f"命令里的 pid 应恰好一个 4321，实得 {pids!r}（command={cmd!r}）")
     assert_("/IM" not in cmd, "不许按进程名批量杀")
@@ -294,7 +295,7 @@ def _restart_flag():
 check("wants_restart 只认 --restart", _restart_flag)
 
 
-# ── 8. probe() 性能与健康判据（M1 DoD 1 / T-15 DoD 8：双击到 ready ≤5 秒） ──
+# ── 8. probe() 性能与健康判据（启动指标：首次 ≤8 s / 稳态 ≤3 s，CRD-0005） ──
 print("[8] probe()：空端口要快，有人监听仍判 workbench/foreign")
 
 
@@ -410,7 +411,7 @@ def _probe_foreign_http():
 check("HTTP 返回但不是本工作台指纹（缺 diagnostics）→ foreign", _probe_foreign_http)
 
 
-# ── 9. wait_ready 轮询间隔（冷启动 5 秒预算） ──────────────────────
+# ── 9. wait_ready 轮询间隔（启动指标，CRD-0005） ──────────────────
 print("[9] wait_ready：轮询间隔 ≤0.2s（冷启动时最坏不能白等 0.6s）")
 
 
@@ -434,7 +435,7 @@ def _wait_ready_polls_fast():
     gaps = [stamps[i + 1] - stamps[i] for i in range(len(stamps) - 1)]
     worst = max(gaps) if gaps else 99.0
     assert_(worst <= 0.2,
-            f"wait_ready 轮询间隔 {worst:.2f}s > 0.2s（每次最坏白等这么久，冷启动 5 秒预算吃不住）")
+            f"wait_ready 轮询间隔 {worst:.2f}s > 0.2s（每次最坏白等这么久，吃启动指标预算）")
     assert_(len(stamps) >= 3, f"1 秒内只轮询了 {len(stamps)} 次（间隔过大）")
 
 
@@ -604,6 +605,110 @@ def _restart_no_port_unchanged():
 
 
 check("不带端口的 --restart：无实例时照常启动（行为不变）", _restart_no_port_unchanged)
+
+
+# ── 11. 安全评审：工具走 System32 绝对路径 + 端口范围 ───────────────
+print("[11] 安全：netstat/taskkill 用 System32 绝对路径；--restart 端口范围合法")
+
+
+def _absolute_system32(path, exe):
+    assert_(os.path.isabs(path), f"必须是绝对路径：{path!r}")
+    assert_(os.path.basename(path).lower() == exe, f"文件名应为 {exe}：{path!r}")
+    assert_("system32" in path.lower(), f"必须在 System32 下：{path!r}")
+
+
+def _taskkill_absolute():
+    mod = load_with({})
+    plan = mod.restart_plan(8792, "workbench", 4321)
+    _absolute_system32(plan["command"][0], "taskkill.exe")
+    pids = [t for t in plan["command"] if str(t).isdigit()]
+    assert_(pids == ["4321"], f"命令里应恰好一个 pid：{plan['command']!r}")
+
+
+check("taskkill 走 System32 绝对路径（不靠 PATH/当前目录）", _taskkill_absolute)
+
+
+def _listener_pid_absolute():
+    mod = load_with({})
+    calls = []
+    fake_out = (
+        "  Proto  Local Address          Foreign Address        State           PID\r\n"
+        "  TCP    127.0.0.1:8792         127.0.0.1:50000        TIME_WAIT       0\r\n"
+        "  TCP    127.0.0.1:8792         0.0.0.0:0              LISTENING       4321\r\n"
+        "  TCP    127.0.0.1:8800         0.0.0.0:0              LISTENING       7777\r\n"
+    )
+
+    class Result:
+        stdout = fake_out
+
+    def fake_run(argv, **kwargs):
+        calls.append(list(argv))
+        return Result()
+
+    mod.subprocess.run = fake_run
+    pid = mod.listener_pid(8792)
+    assert_(calls, "应调用 netstat")
+    _absolute_system32(calls[-1][0], "netstat.exe")
+    assert_(pid == 4321, f"只认 LISTENING 行的 pid 4321（TIME_WAIT 的 0 不算），实得 {pid!r}")
+
+
+check("netstat 走 System32 绝对路径，且只取 LISTENING 行的 pid", _listener_pid_absolute)
+
+
+def _listener_pid_ignores_non_listening():
+    mod = load_with({})
+    fake_out = (
+        "  TCP    127.0.0.1:8792         127.0.0.1:50000        TIME_WAIT       0\r\n"
+        "  TCP    127.0.0.1:8792         127.0.0.1:50001        FIN_WAIT_2      1234\r\n"
+    )
+
+    class Result:
+        stdout = fake_out
+
+    mod.subprocess.run = lambda argv, **kwargs: Result()
+    assert_(mod.listener_pid(8792) is None,
+            f"没有 LISTENING 行时必须返回 None，实得 {mod.listener_pid(8792)!r}")
+
+
+check("没有 LISTENING 行 → listener_pid 返回 None（不拿 TIME_WAIT 的 pid）",
+      _listener_pid_ignores_non_listening)
+
+
+def _restart_port_range():
+    mod = load_with({})
+    assert_(mod.restart_target(["--restart", "1"]) == (True, 1), "端口 1 合法")
+    assert_(mod.restart_target(["--restart", "65535"]) == (True, 65535), "端口 65535 合法")
+    for bad in ("0", "65536", "99999", "-1", "abc"):
+        got = mod.restart_target(["--restart", bad])
+        assert_(got == (True, None), f"--restart {bad} 应按不带端口处理，实得 {got!r}")
+
+
+check("--restart 端口范围 0 < PORT < 65536，越界/非数字按不带端口", _restart_port_range)
+
+
+def _restart_out_of_range_no_crash():
+    mod = load_with({})
+    spawned = []
+
+    class FakeProc:
+        pid = 1
+
+        def poll(self):
+            return None
+
+    mod.probe = lambda p: "free"
+    mod.spawn = lambda p: (spawned.append(p), FakeProc())[1]
+    mod.wait_ready = lambda p, proc: True
+    mod.open_page = lambda url: None
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = mod.main(["--restart", "99999"])       # 不得抛 OverflowError
+    out = buf.getvalue()
+    assert_(rc == 0, f"越界端口应按不带端口照常启动，rc={rc}；输出：{out!r}")
+    assert_(spawned == [mod.PORTS[0]], f"应扫描候选起在 {mod.PORTS[0]}，实得 {spawned!r}")
+
+
+check("--restart 99999 不抛 OverflowError，按不带端口处理", _restart_out_of_range_no_crash)
 
 
 print(f"\n通过 {_ok} / {_ok + _fail}")

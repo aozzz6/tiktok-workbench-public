@@ -1,4 +1,5 @@
 @echo off
+setlocal
 rem T-18 portable entry: environment check for the portable package.
 rem Runs first_run.py in portable, offline mode and always pauses before closing
 rem (double-click users must be able to read the result).

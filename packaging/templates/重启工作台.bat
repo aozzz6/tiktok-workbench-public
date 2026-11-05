@@ -1,4 +1,5 @@
 @echo off
+setlocal
 rem T-18 portable entry: restart the workbench (optionally on one given port).
 rem Usage: double-click this file, or give it one argument: the port to restart on.
 rem One argument -> only that port is handled: our workbench there is restarted on the
@@ -11,7 +12,7 @@ if not exist "%PY%" (
   pause
   exit /b 1
 )
-"%PY%" "%WB_ROOT%webapp\_launch.py" --restart %~1
+"%PY%" "%WB_ROOT%webapp\_launch.py" --restart "%~1"
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" (
   echo.

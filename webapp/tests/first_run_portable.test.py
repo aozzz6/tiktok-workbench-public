@@ -286,6 +286,120 @@ def case_no_network():
 check("不联网：socket/urllib 打桩后仍退出 0、无 [FAIL]、网络调用 0 次", case_no_network)
 
 
+def case_proxy_credentials_masked():
+    """安全：`检查环境.bat` 会打印代理；带 user:pass@ 的凭据绝不许出现在屏幕上。
+
+    `WB_PROXY=http://user:pass@127.0.0.1:7892` 是合法写法（有些代理要认证），
+    但打印出来会进截图/求助贴。打印前只留 `scheme://host:port`。
+    """
+    import socket
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    raw = "http://user:pass@127.0.0.1:7892"
+    buf = io.StringIO()
+    real = socket.create_connection
+    try:
+        socket.create_connection = lambda *_a, **_k: _FakeConn()
+        with contextlib.redirect_stdout(buf):
+            ok = first_run.check_proxy(raw, portable=True)
+    finally:
+        socket.create_connection = real
+    out = buf.getvalue()
+    assert_(ok is True, f"桩连上时 check_proxy 应返回 True；输出：{out!r}")
+    assert_("http://127.0.0.1:7892" in out, f"应打印 scheme://host:port；实得：{out!r}")
+    assert_("user" not in out and "pass" not in out, f"代理凭据被打印到屏幕上了：{out!r}")
+
+    # 连不上时那条 [WARN] 也不许带凭据
+    buf2 = io.StringIO()
+    with contextlib.redirect_stdout(buf2):
+        ok2 = first_run.check_proxy("http://user:pass@127.0.0.1:9", portable=True)
+    out2 = buf2.getvalue()
+    assert_(ok2 is False, f"127.0.0.1:9 应连不上；输出：{out2!r}")
+    assert_("user" not in out2 and "pass" not in out2, f"WARN 行里带了代理凭据：{out2!r}")
+
+    # 没有 userinfo 时输出一个字都不能变
+    assert_(first_run._mask_proxy("http://127.0.0.1:7892") == "http://127.0.0.1:7892",
+            "没有凭据的代理地址不该被改写")
+
+
+check("安全：带 user:pass@ 的代理打印前去掉凭据（只留 scheme://host:port）",
+      case_proxy_credentials_masked)
+
+
+# ── 2c. 坏台账（0 字节 / 截断）不许被快路径静默吞掉 ─────────────────────
+def case_corrupt_ledger_zero_byte():
+    """`openpyxl.save()` 不是原子写：进程被杀会留下 0 字节 xlsx。
+
+    这种文件如果被当成"台账已就绪"，快路径会零输出静默返回 0，
+    而看板打不开台账 → 用户拿不到任何线索。所以：0 字节 = 没有台账，
+    落回完整路径，并把原因写进 logs\\first-run.log，且**绝不覆盖**它。
+    """
+    t = tmpdir("corrupt0")
+    pipe, ledger_dir, log_dir = t / "pipeline", t / "ledger", t / "logs"
+    rc, out, _el = run_first_run(
+        ["--portable", "--init-only", "--pipeline-dir", pipe, "--ledger-dir", ledger_dir])
+    assert_(rc == 0, f"首次 init-only 应退出 0，实得 {rc}；输出尾：{out[-500:]}")
+    xlsx = ledger_dir / "tiktok_对标.xlsx"
+    assert_(xlsx.is_file() and xlsx.stat().st_size > 0, "首次应建出非空台账")
+
+    xlsx.write_bytes(b"")                     # 模拟 openpyxl.save() 中途被杀
+    mtime = xlsx.stat().st_mtime_ns
+
+    rc2, out2, _el2 = run_first_run(
+        ["--portable", "--init-only", "--pipeline-dir", pipe, "--ledger-dir", ledger_dir],
+        env=base_env({"WB_LOG_DIR": log_dir}))
+    assert_(rc2 == 0, f"--init-only 仍应退出 0，实得 {rc2}；输出：{out2[-600:]}")
+    log = log_dir / "first-run.log"
+    assert_(log.is_file(), "0 字节台账没有留下任何线索：快路径把它静默当成就绪了")
+    text = log.read_text(encoding="utf-8", errors="replace")
+    assert_(("损坏" in text) or ("为空" in text), f"日志里没说台账坏了：{text[:400]!r}")
+    assert_("tiktok_对标.xlsx" in text, f"日志里要指名是哪个文件：{text[:400]!r}")
+
+    assert_(xlsx.stat().st_size == 0, "坏台账被覆盖了（应只报不写）")
+    assert_(xlsx.stat().st_mtime_ns == mtime, "坏台账被改写了（应只报不写）")
+    assert_(len(list(ledger_dir.glob("*.xlsx"))) == 1, "不该在旁边再生成第二本台账")
+
+
+def case_corrupt_ledger_truncated():
+    """截断的 xlsx（有 PK 头、但没有 ZIP 的 End of Central Directory）同样算坏。"""
+    t = tmpdir("corrupt1")
+    pipe, ledger_dir, log_dir = t / "pipeline", t / "ledger", t / "logs"
+    rc, out, _el = run_first_run(
+        ["--portable", "--init-only", "--pipeline-dir", pipe, "--ledger-dir", ledger_dir])
+    assert_(rc == 0, f"首次 init-only 应退出 0，实得 {rc}；输出尾：{out[-500:]}")
+    xlsx = ledger_dir / "tiktok_对标.xlsx"
+    xlsx.write_bytes(b"PK\x03\x04" + b"truncated" * 8)     # 有魔数、没有 EOCD
+
+    rc2, out2, _el2 = run_first_run(
+        ["--portable", "--init-only", "--pipeline-dir", pipe, "--ledger-dir", ledger_dir],
+        env=base_env({"WB_LOG_DIR": log_dir}))
+    assert_(rc2 == 0, f"--init-only 仍应退出 0，实得 {rc2}；输出：{out2[-600:]}")
+    log = log_dir / "first-run.log"
+    assert_(log.is_file(), "截断的台账没有留下线索（快路径当成就绪了）")
+    assert_(("损坏" in log.read_text(encoding="utf-8", errors="replace")),
+            "日志里没说台账坏了")
+
+    # --portable 检查模式：坏台账只算 [WARN]，不占那三类 [FAIL]，退出码仍 0
+    rc3, out3, _el3 = run_first_run(
+        ["--portable", "--no-network", "--dry-run",
+         "--pipeline-dir", pipe, "--ledger-dir", ledger_dir])
+    assert_(rc3 == 0, f"坏台账在检查模式应只是 WARN（退出 0），实得 {rc3}；输出：{out3[-600:]}")
+    assert_("[FAIL]" not in out3, f"坏台账不许占那三类 [FAIL]：{out3[-600:]}")
+    assert_("损坏" in out3, f"检查模式应说明台账坏了：{out3[-600:]}")
+
+
+check("坏台账（0 字节）：快路径不生效、原因写进 logs\\first-run.log、绝不覆盖",
+      case_corrupt_ledger_zero_byte)
+check("坏台账（截断/无 EOCD）：同样判坏；检查模式只 WARN、不占 [FAIL]",
+      case_corrupt_ledger_truncated)
+
+
 def case_init_only_logs_failure():
     """契约 §3：--init-only 失败不阻断启动，只把原因写进 logs\\first-run.log。"""
     t = tmpdir("initlog")

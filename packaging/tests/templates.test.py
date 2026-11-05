@@ -36,11 +36,11 @@ START = TPL / "start.bat"
 SET_NAMES = [
     "WB_ROOT", "PY", "WB_PYTHON", "WB_PYTHONW", "WB_PIPELINE_DIR", "WB_HOME",
     "WB_LEDGER_DIR", "WB_REVERSE_DIR", "WB_LOG_DIR", "HF_HOME", "PATH",
-    "PYTHONIOENCODING",
+    "PYTHONIOENCODING", "PYTHONNOUSERSITE",
 ]
 CLEAR_NAMES = [
-    "PYTHONPATH", "PYTHONHOME", "HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE",
-    "XDG_CACHE_HOME", "HF_HUB_OFFLINE",
+    "PYTHONPATH", "PYTHONHOME", "PYTHONUSERBASE", "HF_HUB_CACHE",
+    "HUGGINGFACE_HUB_CACHE", "XDG_CACHE_HOME", "HF_HUB_OFFLINE",
 ]
 SET_RE = re.compile(r'^set "([A-Za-z_][A-Za-z0-9_]*)=(.*)"$')
 ABS_PATH_RE = re.compile(r"[A-Za-z]:\\")
@@ -96,22 +96,22 @@ def parse_sets(text: str):
 
 print("T-14 启动模板契约（templates）")
 
-# ── (a) 18 行 + 名字齐全 ────────────────────────────────────────────
-print("[a] _setenv.bat：12 设值 + 6 清空 = 18 行")
+# ── (a) 20 行 + 名字齐全 ────────────────────────────────────────────
+print("[a] _setenv.bat：13 设值 + 7 清空 = 20 行")
 
 
-def _setenv_18_lines():
+def _setenv_lines():
     sets, clears, bad = parse_sets(read_text(SETENV))
     assert_(not bad, f"有不是裸赋值的 set 行：{bad!r}")
     assert_(sorted(sets) == sorted(SET_NAMES),
             f"设值变量应恰好 {SET_NAMES}，实得 {sorted(sets)}")
     assert_(sorted(clears) == sorted(CLEAR_NAMES),
             f"清空变量应恰好 {CLEAR_NAMES}，实得 {sorted(clears)}")
-    assert_(len(sets) + len(clears) == 18,
-            f"应 12+6=18 行，实得 {len(sets)}+{len(clears)}")
+    assert_(len(sets) + len(clears) == 20,
+            f"应 13+7=20 行，实得 {len(sets)}+{len(clears)}")
 
 
-check("12 条设值 + 6 条清空，变量名一个不多一个不少", _setenv_18_lines)
+check("13 条设值 + 7 条清空，变量名一个不多一个不少", _setenv_lines)
 
 
 # ── 各变量取值 ──────────────────────────────────────────────────────
@@ -129,6 +129,7 @@ def _setenv_values():
         "WB_LOG_DIR": "%WB_ROOT%logs",
         "HF_HOME": "%WB_ROOT%models\\hf",
         "PYTHONIOENCODING": "utf-8",
+        "PYTHONNOUSERSITE": "1",
     }
     for name, value in want.items():
         assert_(sets.get(name) == value, f"{name}={sets.get(name)!r}，期望 {value!r}")
@@ -189,6 +190,23 @@ def _entries_call_setenv():
 check("(e) 入口 .bat 都 call \"%~dp0_setenv.bat\"", _entries_call_setenv)
 
 
+# ── (e2) 入口用 setlocal 隔离变量；_setenv.bat 自己不能 setlocal ─────
+def _entry_setlocal():
+    for path in (LAUNCH, START):
+        lines = [ln.strip().lower() for ln in read_text(path).splitlines()]
+        assert_(lines and lines[0] == "@echo off", f"{path.name} 第一行应是 @echo off")
+        assert_("setlocal" in lines, f"{path.name} 顶部缺 setlocal（变量会漏进调用者会话）")
+        setlocal_at = lines.index("setlocal")
+        call_at = next(i for i, ln in enumerate(lines) if 'call "%~dp0_setenv.bat"' in ln)
+        assert_(setlocal_at < call_at, f"{path.name} 的 setlocal 必须在 call _setenv.bat 之前")
+    setenv = read_text(SETENV).lower()
+    assert_("setlocal" not in setenv,
+            "_setenv.bat 自己不能 setlocal，否则变量传不回调用者")
+
+
+check("(e2) 入口有 setlocal 且早于 call；_setenv.bat 自己不用 setlocal", _entry_setlocal)
+
+
 # ── (f) 纯 ASCII（逐字节） ─────────────────────────────────────────
 def _ascii_bytes():
     for path in (SETENV, LAUNCH, START):
@@ -211,15 +229,20 @@ def _no_abs_paths():
 check("(g) _setenv.bat 不含盘符绝对路径 / C:\\Users / /home/", _no_abs_paths)
 
 
-# ── (h) 结尾的本地覆盖 ──────────────────────────────────────────────
+# ── (h) 结尾的本地覆盖 + exit /b 0（清 errorlevel） ─────────────────
 def _local_override_tail():
-    lines = [ln.strip() for ln in read_text(SETENV).splitlines() if ln.strip()]
+    lines = [ln.strip() for ln in read_text(SETENV).splitlines()
+             if ln.strip() and not ln.strip().lower().startswith("rem ")]
     assert_(lines, "文件为空")
-    want = 'if exist "%~dp0_setenv.local.bat" call "%~dp0_setenv.local.bat"'
-    assert_(lines[-1] == want, f"最后一行={lines[-1]!r}，期望 {want!r}")
+    want_local = 'if exist "%~dp0_setenv.local.bat" call "%~dp0_setenv.local.bat"'
+    assert_(want_local in lines, f"缺少本地覆盖行：{want_local!r}")
+    assert_(lines[-1].lower() == "exit /b 0",
+            f"最后一条有效语句必须是 exit /b 0（把 set 留下的旧 errorlevel 清成 0），实得 {lines[-1]!r}")
+    assert_(lines.index(want_local) == len(lines) - 2,
+            f"exit /b 0 必须紧跟在本地覆盖行之后：{lines[-3:]!r}")
 
 
-check("(h) 结尾 call _setenv.local.bat（存在才 call）", _local_override_tail)
+check("(h) 结尾 call _setenv.local.bat，最后 exit /b 0", _local_override_tail)
 
 
 # ── 入口内容：初始化 + 启动 + 不要管理员 ───────────────────────────
@@ -265,6 +288,8 @@ def _counter_example():
             'set "PYTHONPATH=C:\\Users\\x\\pylib"\r\n'
             'set "HF_HUB_CACHE=C:\\Users\\x\\.cache\\hub"\r\n'
             'set "XDG_CACHE_HOME=D:\\old\\xdg"\r\n'
+            'set "PYTHONNOUSERSITE=0"\r\n'
+            'set "PYTHONUSERBASE=C:\\Users\\x\\AppData\\Roaming\\Python"\r\n'
             'call "%~dp0_setenv.bat"\r\n'
             "echo [HOME]=%WB_HOME%\r\n"
             "echo [LEDGER]=%WB_LEDGER_DIR%\r\n"
@@ -272,6 +297,8 @@ def _counter_example():
             "echo [PYTHONPATH]=%PYTHONPATH%\r\n"
             "echo [HF_HUB_CACHE]=%HF_HUB_CACHE%\r\n"
             "echo [XDG_CACHE_HOME]=%XDG_CACHE_HOME%\r\n"
+            "echo [PYTHONNOUSERSITE]=%PYTHONNOUSERSITE%\r\n"
+            "echo [PYTHONUSERBASE]=%PYTHONUSERBASE%\r\n"
             "echo [ROOT]=%WB_ROOT%\r\n",
             encoding="ascii", newline="")
         proc = subprocess.run(["cmd", "/c", str(wrapper)], cwd=str(tmp),
@@ -287,6 +314,8 @@ def _counter_example():
             "[PYTHONPATH]=": "[PYTHONPATH] 清空",
             "[HF_HUB_CACHE]=": "[HF_HUB_CACHE] 清空",
             "[XDG_CACHE_HOME]=": "[XDG_CACHE_HOME] 清空",
+            "[PYTHONNOUSERSITE]=1": "[PYTHONNOUSERSITE] 必须强制 1",
+            "[PYTHONUSERBASE]=": "[PYTHONUSERBASE] 清空",
             f"[ROOT]={tmp}\\": "[ROOT]",
         }
         for want, label in expected.items():
@@ -297,7 +326,44 @@ def _counter_example():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-check("(DoD 3) 用户机残留的 WB_HOME / WB_LEDGER_DIR / WB_REVERSE_DIR 被包内值覆盖", _counter_example)
+check("(DoD 3) 用户机残留的 WB_* / PYTHON* 被包内值覆盖", _counter_example)
+
+
+# ── errorlevel：call _setenv.bat 必须把旧 errorlevel 清成 0 ─────────
+print("[errorlevel] 调用前 shell 的旧 errorlevel 不能漏出来")
+
+
+def _errorlevel_clean():
+    base = "D:\\" if os.path.isdir("D:\\") else tempfile.gettempdir()
+    tmp = Path(tempfile.mkdtemp(prefix="t14_errlevel_", dir=base))
+    try:
+        shutil.copyfile(SETENV, tmp / "_setenv.bat")
+        wrapper = tmp / "_call.bat"
+        wrapper.write_text(
+            "@echo off\r\n"
+            'cmd /c "exit 1"\r\n'
+            "echo [BEFORE]=%ERRORLEVEL%\r\n"
+            'call "%~dp0_setenv.bat"\r\n'
+            "echo [AFTER]=%ERRORLEVEL%\r\n"
+            "echo [PY]=%PY%\r\n",
+            encoding="ascii", newline="")
+        proc = subprocess.run(["cmd", "/c", str(wrapper)], cwd=str(tmp),
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60)
+        out = proc.stdout.replace("\r", "")
+        lines = [ln.strip() for ln in out.splitlines()]
+        assert_(proc.returncode == 0,
+                f"cmd 退出码 {proc.returncode}；stdout={out!r} stderr={proc.stderr!r}")
+        assert_("[BEFORE]=1" in lines, f"没造出旧 errorlevel=1：{lines!r}")
+        assert_("[AFTER]=0" in lines,
+                f"call 之后 errorlevel 必须是 0（旧值漏出来了）：{lines!r}")
+        assert_(f"[PY]={tmp}\\python\\python.exe" in lines,
+                f"环境变量没设上：{lines!r}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+check("调用前 shell 有旧 errorlevel=1，call 之后变 0 且变量已设", _errorlevel_clean)
 
 
 print(f"\n通过 {_ok} / {_ok + _fail}")

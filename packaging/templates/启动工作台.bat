@@ -1,4 +1,5 @@
 @echo off
+setlocal
 rem T-14 portable entry: environment -> best-effort first run -> launcher.
 rem Exit code is the launcher exit code (0 ready, 1 failed, 2 old instance / restart failed).
 call "%~dp0_setenv.bat"
