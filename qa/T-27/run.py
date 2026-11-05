@@ -22,15 +22,17 @@ T-27 = `webapp\\config.py` 的两处读取侧修正：
   13  四个基线全绿的既有用例仍绿（accounts_write / accounts_build / ledger_unify / overview_kpi）
   14  image_ledger 只允许基线 errors=3（load_secuid 过期桩），无新增
   15  lease_owner 回到 18/21，只剩 3 条 _assert_playable 既有红
-  16  端到端换目录：qa27 包复制到 D:\\测试 目录 二\\工作台，旧路径的 accounts.json 仍读到新位置产物
+  16  端到端换目录：qa27 包复制到 <temp>\\测试 目录 二\\工作台，旧路径的 accounts.json 仍读到新位置产物
 
 跑法（仓库根）：
     pipeline\\.venv\\Scripts\\python.exe qa\\T-27\\run.py
 
-退出码：0 = 全部通过；1 = 有失败；2 = 有 blocked（环境不满足，如候选端口全被占）。
+退出码：0 = 全部通过；1 = 有失败；2 = 有 blocked（环境不满足，如另一个 T-27 用例一直占着锁）。
 
 第 16 条每次都用 packaging\\build_portable.py 重新构建 `build\\portable\\qa27\\slim`
 （不会碰 build\\portable\\slim）；`QA27_REUSE=1` 时若 stamp 与 HEAD+config.py 哈希一致才复用。
+包副本只放在本次 `tempfile.mkdtemp()` 里（路径仍带中文和空格），清理只删这个临时目录，
+**不碰 `D:\\测试 目录*`**（HLD §9 的手动验收位置）。
 """
 from __future__ import annotations
 
@@ -64,8 +66,6 @@ PY_WEBAPP = WEBAPP / ".venv" / "Scripts" / "python.exe"
 BUILD_ROOT = REPO / "build" / "portable" / "qa27"
 PKG = BUILD_ROOT / "slim"
 FFMPEG_DIR = Path(r"D:\ffmpeg\build\ffmpeg-9.0.2-essentials_build\bin")
-E2E_TARGET = Path(r"D:\测试 目录 二\工作台")
-E2E_ORIG = Path(r"D:\原始安装位置\工作台")        # 只作为「原始安装位置」的字面路径，不必存在
 
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -565,14 +565,19 @@ def c16():
     assert (PKG / "python" / "python.exe").is_file(), f"包不完整：{PKG}"
     assert (PKG / "webapp" / "app.py").is_file(), f"包不完整：{PKG}"
 
-    tmp = Path(tempfile.mkdtemp(prefix="qa27_e2e_"))
+    # 包副本仍放在「中文 + 空格」路径下（判据不变），但整棵树只在本次 mkdtemp 里：
+    # 绝不碰 D:\测试 目录*（HLD §9 的手动验收位置，PM/用户可能正放在那里）。
+    root = Path(tempfile.mkdtemp(prefix="qa27_e2e_"))
+    tmp = root / "tmp"
+    tmp.mkdir()
     proc = None
-    target = E2E_TARGET
+    target = root / "测试 目录 二" / "工作台"
     try:
-        assert str(target).lower().startswith("d:\\"), f"目标路径异常：{target}"
-        if target.exists():
-            shutil.rmtree(target)                      # QA 约定路径：上一次的残留先清掉
+        assert target.resolve().is_relative_to(root.resolve()), \
+            f"目标路径不在本次临时目录里：{target}"
         target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            shutil.rmtree(target)                      # 只可能是自己临时目录里的残留
         shutil.copytree(PKG, target)
         evidence.append(f"复制：{PKG} -> {target}")
 
@@ -688,15 +693,9 @@ def c16():
         return evidence
     finally:
         _kill_own(proc)
-        shutil.rmtree(tmp, ignore_errors=True)
-        if target.exists():
-            shutil.rmtree(target, ignore_errors=True)
-        parent = target.parent
-        try:
-            if parent.is_dir() and not any(parent.iterdir()):
-                parent.rmdir()
-        except OSError:
-            pass
+        # 只删自己 mkdtemp 出来的根（包副本、独立 TEMP、server 日志都在里面）；
+        # D:\测试 目录* 一律不碰。
+        shutil.rmtree(root, ignore_errors=True)
 
 
 # ── 入口 ─────────────────────────────────────────────────────────────

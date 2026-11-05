@@ -13,7 +13,7 @@
     C-01 packaging\\tests\\launchers.test.py 退出 0（复用单测，只作弱证据）
     C-02 两个 .bat 的静态契约（独立核对：字节、call、关键字、无绝对路径）
     C-03 引用可解析（webapp\\_launch.py / first_run.py 仓库与包内都存在）
-    C-04 包上实跑 重启工作台.bat：<5 s、端口不变、pid 变了（真重启）
+    C-04 包上实跑 重启工作台.bat：<3 s（DoD 3 稳态门槛）、端口不变、pid 变了（真重启）
     C-05 包上实跑 检查环境.bat：退出 0、三类各一行、无 [FAIL]（slim 无模型应为 [WARN]）
     C-06 包不存在时退出码 2 并打印构建命令（临时改名 → 子进程 → finally 恢复并校验）
     C-07 入口可被 run-all 发现、且能在仓库根用文档指定的解释器跑起来
@@ -175,24 +175,40 @@ def wait_health(port: int, timeout: float = 20.0):
     return None
 
 
-def listener_pid(port: int):
-    """监听该端口的 pid（与 _launch.listener_pid 同口径）。"""
+def _ps(script: str):
+    """跑一段 PowerShell（用绝对路径；剥环境里 PATH 上没有 powershell）。"""
+    ps = os.path.join(os.environ.get("SystemRoot") or r"C:\Windows",
+                      "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
     try:
         proc = subprocess.run(
-            ["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=30,
+            [ps, "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
-    except (OSError, subprocess.SubprocessError):
+        return proc.returncode, (proc.stdout or ""), (proc.stderr or "")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, "", str(exc)
+
+
+def listener_pid(port: int):
+    """端口当前的**监听** pid —— 独立实现，不抄产品。
+
+    评审要求：`_launch.listener_pid` 自己是 netstat 文本解析，本用例不要再抄一份
+    —— 产品那条解析错了，抄同一份的用例永远发现不了。这里改走 Win32 API
+    （`Get-NetTCPConnection -State Listen`）：只认 LISTENING 的连接，也就不会像文本
+    解析那样把 TIME_WAIT 行当成监听、取到 pid 0 而假红。
+    """
+    rc, out, _err = _ps(
+        "(Get-NetTCPConnection -LocalPort %d -State Listen -ErrorAction SilentlyContinue "
+        "| Select-Object -First 1 -ExpandProperty OwningProcess)" % port)
+    text = out.strip()
+    if not text.isdigit():
         return None
-    for line in (proc.stdout or "").splitlines():
-        parts = line.split()
-        if (len(parts) >= 5 and parts[0].upper() == "TCP"
-                and parts[1].endswith(":" + str(port)) and parts[-1].isdigit()):
-            return int(parts[-1])
-    return None
+    pid = int(text)
+    return pid if pid > 0 else None
 
 
 def port_free(port: int) -> bool:
+    """bind 成功即说明没有监听者（顺带避开 TIME_WAIT 占着的端口）。"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.3)
         try:
@@ -202,26 +218,37 @@ def port_free(port: int) -> bool:
             return False
 
 
+def port_has_listener(port: int, timeout: float = 0.25) -> bool:
+    """端口上现在有没有人在听（快速探针；等端口释放用，不解析 pid）。"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
+        try:
+            sock.connect(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def wait_no_listener(port: int, timeout: float = 8.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not port_has_listener(port):
+            return True
+        time.sleep(0.25)
+    return not port_has_listener(port)
+
+
 def pick_port():
     for port in PORT_CANDIDATES:
-        if port_free(port) and listener_pid(port) is None:
+        if port_free(port):
             return port
     return None
 
 
 def pid_exe(pid: int) -> str:
     """pid 的可执行文件路径；读不到返回空串（不因此拒绝清理，见 cleanup）。"""
-    ps = os.path.join(os.environ.get("SystemRoot") or r"C:\Windows",
-                      "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-    try:
-        proc = subprocess.run(
-            [ps, "-NoProfile", "-NonInteractive", "-Command",
-             "(Get-CimInstance Win32_Process -Filter 'ProcessId=%d').ExecutablePath" % pid],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
-        )
-        return (proc.stdout or "").strip()
-    except (OSError, subprocess.SubprocessError):
-        return ""
+    _rc, out, _err = _ps("(Get-CimInstance Win32_Process -Filter 'ProcessId=%d').ExecutablePath" % pid)
+    return out.strip()
 
 
 def cleanup(port: int, copy_root: Path, why: str) -> list:
@@ -236,11 +263,9 @@ def cleanup(port: int, copy_root: Path, why: str) -> list:
         ev.append("%s：pid %d 的可执行文件是 %s，不在复制包里 → 不杀" % (why, pid, exe))
         return ev
     subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=30)
-    deadline = time.time() + 10
-    while time.time() < deadline and listener_pid(port):
-        time.sleep(0.2)
+    released = wait_no_listener(port, 8.0)
     ev.append("%s：已结束 pid %d（端口 %d 现在 %s）"
-              % (why, pid, port, "已释放" if not listener_pid(port) else "仍有监听"))
+              % (why, pid, port, "已释放" if released else "仍有监听"))
     return ev
 
 
@@ -355,7 +380,7 @@ def c03():
     return ev
 
 
-@case("C-04", "包上实跑 重启工作台.bat：<5 s、端口不变、pid 变了")
+@case("C-04", "包上实跑 重启工作台.bat：<3 s（DoD 3 稳态门槛）、端口不变、pid 变了")
 def c04():
     ev = []
     stale = assets_are_fresh(PKG)
@@ -397,11 +422,12 @@ def c04():
         assert data2 is not None, "重启后 %d 上 health 拿不到（%.1fs）" % (port, secs2)
         assert pid2, "重启后 %d 上没有监听进程" % port
         assert pid2 != pid1, "重启前后 pid 相同（%d）——没有真重启" % pid1
-        assert secs2 <= 5.0, "重启耗时 %.2fs 超过 5 秒（DoD 3）" % secs2
+        assert secs2 <= 3.0, \
+            "重启耗时 %.2fs 超过 3 秒（DoD 3 稳态门槛，实测值就是判据）" % secs2
         pipe2 = str((data2.get("diagnostics") or {}).get("pipeline_dir") or "")
         assert str(copy).lower() in pipe2.lower(), \
             "重启后 pipeline_dir=%r 不指向复制的包" % pipe2
-        ev.append("重启：exit=0 %.2fs，port=%d（不变），pid %d → %d（变了），health 200"
+        ev.append("重启：exit=0 %.2fs（门槛 ≤3.00s），port=%d（不变），pid %d → %d（变了），health 200"
                   % (secs2, port, pid1, pid2))
     finally:
         # 无论断言在哪一步炸，都把自己起的那个端口的进程收掉（只按 pid 归属清理）。
@@ -534,8 +560,8 @@ def main(argv=None) -> int:
             for line in tb:
                 print("     %s" % line.strip())
 
-    # 起停清理的兜底：只要我复制过的包还在，就再确认一次没有遗留进程占着 879x。
-    leftover = [p for p in PORT_CANDIDATES if listener_pid(p)]
+    # 起停清理的兜底：再确认一次没有遗留进程占着 879x（用快速 socket 探针，不解析 pid）。
+    leftover = [p for p in PORT_CANDIDATES if port_has_listener(p)]
     if leftover:
         print("     注意：%s 上仍有监听进程（本用例在 C-04 里按 pid 归属清理）" % leftover)
 

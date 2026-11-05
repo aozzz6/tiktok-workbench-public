@@ -9,21 +9,25 @@ DoD 来源：docs/tasks/tasks.md 里 T-15 的 DoD 1..19。
     cd D:\\tiktok-workbench
     pipeline\\.venv\\Scripts\\python.exe qa\\T-15\\run.py
 
-Lead 的三条裁决（2026-11-05）：
+Lead 的裁决（2026-11-05/06）：
   1. 第 15 条 `id="appVersion"` 由 M3 的 T-25 落地，M1 阶段打印
      `DEFERRED-M3: id="appVersion"（T-25）`，不计入失败，但必须出现在输出里。
   2. 第 18 条（DoD 11 连续 10 次）每次都从启动器 stdout 正则抓
      `http://127.0.0.1:(\\d+)/` 的实际端口，用抓到的端口判 health，不写死 8789。
   3. DoD 8/9/10/13/14 相关用例先重跑构建，但输出到 **单独的** `build\\portable\\qa`
      （不覆盖 `build\\portable\\slim`）；本文件所有「包内」检查都读这份新构建
-     `build\\portable\\qa\\slim`，再复制到 `D:\\测试 目录\\qa\\工作台` 做剥环境验收。
-     8789 若被「包实例」（镜像在 `D:\\测试 目录\\*` 或 `build\\portable\\*` 下）占用，
-     可停掉再用；若是别的程序则记 BLOCKED，不杀。
+     `build\\portable\\qa\\slim`，再复制到 `%TEMP%` 下、路径里仍带中文和空格的
+     `<临时目录>\\测试 目录\\qa\\工作台` 做剥环境验收。
+  4. DoD 8 按 CRD-0005 两条判据：首次冷启动 ≤8s、同一副本再启 ≤3s。
 
 纪律：
-  * 只写 `qa\\T-15\\`、`%TEMP%`、`build\\portable\\qa`、`D:\\测试 目录\\qa\\工作台`
-    与 `D:\\测试 目录 二\\工作台`；不碰产品代码、不碰 `build\\portable\\slim`。
-  * 只停自己起的进程（按端口反查 pid + 核对镜像路径在本次复制目录下）。
+  * 只写 `qa\\T-15\\`、`%TEMP%`（含其中的 `测试 目录` 沙箱）、`build\\portable\\qa`；
+    **绝不碰** `D:\\测试 目录*`（HLD §9 的手动验收位置），不碰产品代码、
+    不碰 `build\\portable\\slim`。
+  * 只停本进程自己起的 pid（`_OUR_PIDS` 里登记的）；8789 被别人占着时
+    记 BLOCKED 或换端口，**不按路径前缀判归属、不杀别人**。
+  * 所有 rmtree 都受 `_safe_to_delete` 约束：只允许删本次 `<TEMP>\\qa15_*` 沙箱
+    和本次 `qa_t15_*` 临时目录。
   * 剥环境：PATH=%SystemRoot%\\system32;%SystemRoot%、独立空 TEMP/TMP、清空
     WB_*/HF_*/PYTHON*、HTTP(S)_PROXY 指向黑洞；`.bat` 用绝对路径（本机
     NoDefaultCurrentDirectoryInExePath=1，不能靠 cwd 找）。
@@ -67,8 +71,11 @@ WEBAPP_PY = REPO / "webapp" / ".venv" / "Scripts" / "python.exe"
 BUILD_PY = REPO / "packaging" / "build_portable.py"
 BUILD_OUT = REPO / "build" / "portable" / "qa"
 PKG = BUILD_OUT / "slim"
-COPY1 = Path(r"D:\测试 目录\qa\工作台")
-COPY2 = Path(r"D:\测试 目录 二\工作台")
+# 所有测试副本都放本次唯一沙箱（%TEMP%\qa15_sandbox_*）下，路径仍带中文和空格；
+# 绝不使用 HLD §9 的手动验收位置（仓库外那个既有目录）。
+_SANDBOX = Path(tempfile.mkdtemp(prefix="qa15_sandbox_"))
+COPY1 = _SANDBOX / "测试 目录" / "qa" / "工作台"
+COPY2 = _SANDBOX / "测试 目录 二" / "工作台"
 FFMPEG_DIR = Path(r"D:\ffmpeg\build\ffmpeg-9.0.2-essentials_build\bin")
 PORTS = [8789, 8791, 8792, 8793, 8787]
 BROWSER = Path(os.environ.get("LOCALAPPDATA", "")) / "ms-playwright" / "chromium-1248" / "chrome-win64" / "chrome.exe"
@@ -106,8 +113,6 @@ REQUIRED_FILES = (
 )
 DATA_DIRS = ("ledger", "reverse", "logs", "workbuddy", "webapp/data",
              "pipeline/output", "pipeline/reports")
-# 8789 上允许被停的「包实例」镜像前缀（Lead 2026-11-05 裁决）
-ALLOWED_PID_PREFIXES = (Path(r"D:\测试 目录"), REPO / "build" / "portable")
 
 METRICS: dict[str, object] = {}
 _OUR_PIDS: dict[int, Path] = {}      # pid -> 它应该归属的复制目录（只停这些）
@@ -129,6 +134,13 @@ class CaseDeferred(Exception):
         self.evidence = evidence or []
 
 
+class CaseBlocked(Exception):
+    """环境被别人占住、且按纪律不能动它：不算产品失败，但也不能算通过。"""
+    def __init__(self, msg: str, evidence: list[str] | None = None):
+        super().__init__(msg)
+        self.evidence = evidence or []
+
+
 RESULTS: list[tuple[str, int, str]] = []   # (status, number, desc)
 
 
@@ -142,6 +154,11 @@ def case(num: int, desc: str):
                 for line in e.evidence:
                     print("    " + line)
                 RESULTS.append(("DEFERRED", num, desc))
+            except CaseBlocked as e:
+                print("BLOCKED %d. %s -> %s" % (num, desc, e))
+                for line in e.evidence:
+                    print("    " + line)
+                RESULTS.append(("BLOCKED", num, desc))
             except CaseFail as e:
                 print("FAIL %d. %s -> %s" % (num, desc, e))
                 for line in e.evidence:
@@ -278,21 +295,48 @@ def stop_our_instances():
         _OUR_PIDS.pop(pid, None)
 
 
-def ensure_8789_clean(evidence: list[str]) -> None:
-    """按 Lead 裁决：8789 若是包实例（镜像在 D:\\测试 目录 或 build\\portable 下）就停；
-    若是别的程序就 BLOCKED；不杀。"""
+def ensure_8789_free(evidence: list[str]) -> bool:
+    """确保 8789 空闲。只允许停 `_OUR_PIDS` 里登记的本进程实例；
+    别的进程一律不动（不按路径前缀判归属）。返回 True=空闲，False=被别人占着。"""
     if not port_listening(8789):
-        return
+        return True
     pid = listener_pid(8789)
-    image = proc_image(pid) if pid else ""
-    evidence.append("8789 被占用：pid=%s image=%s" % (pid, image or "?"))
-    if pid and any(image_under(image, p) for p in ALLOWED_PID_PREFIXES):
-        stop_pid(pid, Path(image).parent)
-        if not wait_port_free(8789, 15):
-            fail("8789 上的包实例 pid=%s 停不掉" % pid, evidence)
-        evidence.append("已按裁决停掉 8789 上的包实例 pid=%s" % pid)
-        return
-    fail("8789 被非包程序占用（pid=%s image=%s），按纪律不杀，记 BLOCKED" % (pid, image), evidence)
+    if pid and pid in _OUR_PIDS:
+        evidence.append("8789 是本进程之前起的 pid=%s，停掉" % pid)
+        stop_pid(pid, _OUR_PIDS[pid])
+        if wait_port_free(8789, 15):
+            return True
+        evidence.append("本进程 pid=%s 停掉后 8789 仍未释放" % pid)
+        return False
+    evidence.append("8789 被非本进程 pid=%s 占用；按纪律不杀" % (pid or "?"))
+    return False
+
+
+def foreign_workbenches() -> list[tuple[int, int]]:
+    """候选端口上正在跑的、不属于本进程的工作台（pid 不在 _OUR_PIDS）。"""
+    rows = []
+    for p in PORTS:
+        data = health(p, 0.3)
+        if not data:
+            continue
+        pid = listener_pid(p)
+        if pid and pid not in _OUR_PIDS:
+            rows.append((p, pid))
+    return rows
+
+
+def wait_foreign_ports_clear(evidence: list[str], timeout: float = 60.0) -> bool:
+    """启动器会复用任何已在运行的工作台；若那是不属于本进程的实例，按纪律不能杀，
+    只能等它自己停。等不到就返回 False（调用方记 BLOCKED）。"""
+    deadline = time.time() + timeout
+    while True:
+        rows = foreign_workbenches()
+        if not rows:
+            return True
+        if time.time() >= deadline:
+            evidence.append("候选端口上仍有别的工作台在跑（不杀）：%s" % (rows,))
+            return False
+        time.sleep(1.0)
 
 
 # ─────────────────────────── HTTP ───────────────────────────
@@ -450,7 +494,11 @@ def launch_package(pkg: Path, timeout: float = 30.0) -> dict:
                     port, elapsed = cand, time.time() - t0
                     break
     pid = listener_pid(port) if port else None
-    if pid:
+    # 启动器打印「已在 … 运行」时，只有该 pid 本来就是本进程起的才认领；
+    # 否则绝不接管/停别人的实例。
+    if pid and "已在" in out and pid not in _OUR_PIDS:
+        port, elapsed = None, None
+    elif pid:
         _OUR_PIDS[pid] = pkg
     return {"rc": proc.returncode, "out": out, "port": port, "pid": pid,
             "elapsed": elapsed, "tmp": tmp, "marks": marks, "t0": t0}
@@ -495,7 +543,27 @@ def snapshot_tree(base: Path):
     return ("present", rows)
 
 
+def _safe_to_delete(path: Path) -> bool:
+    """只有本次 %TEMP%\\qa15_* 沙箱、以及本次 qa_t15_* 临时目录可以删。
+    `D:\\测试 目录*`（HLD §9 手动验收位置）永远不在允许范围里。"""
+    try:
+        rp = Path(path).resolve()
+    except OSError:
+        return False
+    sandbox = _SANDBOX.resolve()
+    if rp == sandbox or rp.is_relative_to(sandbox):
+        return True
+    tmp = Path(tempfile.gettempdir()).resolve()
+    return (rp != tmp and rp.is_relative_to(tmp)
+            and (rp.name.startswith("qa15_") or rp.name.startswith("qa_t15_")))
+
+
 def copy_tree(src: Path, dst: Path) -> float:
+    rp, sp = Path(dst).resolve(), Path(src).resolve()
+    if not _safe_to_delete(rp):
+        raise RuntimeError("拒绝复制到本次沙箱之外：%s" % dst)
+    if rp == sp or rp.is_relative_to(sp) or sp.is_relative_to(rp):
+        raise RuntimeError("源/目标重叠：%s -> %s" % (src, dst))
     if dst.exists():
         shutil.rmtree(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -513,6 +581,8 @@ def sha256(path: Path) -> str:
 
 
 def safe_rmtree(path: Path):
+    if not _safe_to_delete(path):
+        return
     try:
         if path.exists():
             shutil.rmtree(path, ignore_errors=False)
@@ -789,7 +859,10 @@ def c13():
     if not PKG.is_dir():
         fail("包不存在（先看第 1 条）：%s" % PKG)
     ev = []
-    ensure_8789_clean(ev)
+    if not ensure_8789_free(ev):
+        raise CaseBlocked("8789 被非本进程占用；按纪律不杀别人，DoD 8 的 8789 判据无法验证", ev)
+    if not wait_foreign_ports_clear(ev):
+        raise CaseBlocked("候选端口上有别的副本的工作台在跑（不杀），无法保证落在 8789", ev)
     t_copy = copy_tree(PKG, COPY1)
     ev.append("复制 %s -> %s（%.1fs，%s）" % (PKG, COPY1, t_copy, mb(dir_bytes(COPY1))))
     launch = launch_package(COPY1, timeout=40)
@@ -831,6 +904,10 @@ def c13():
 
     # CRD-0005 第二条：同一副本再次启动 ≤3s。停掉刚才那次，立刻用同一副本再启。
     stop_our_instances()
+    if not ensure_8789_free(ev):
+        raise CaseBlocked("首次实例停止后 8789 被别的进程占住；按纪律不杀别人，无法做『同副本再启』", ev)
+    if not wait_foreign_ports_clear(ev):
+        raise CaseBlocked("再启前候选端口上有别的工作台在跑（不杀），无法验证 ≤3s", ev)
     released = wait_port_free(8789, 15)
     second = launch_package(COPY1, timeout=40)
     ev.append("同副本再启（判据 ≤3s）：启动器 exit=%s，端口=%s，耗时 %.2fs"
@@ -922,11 +999,15 @@ def c17():
         fail("复制目录不存在：%s" % COPY1)
     stop_our_instances()
     wait_port_free(8789, 15)
+    ev = []
+    if not wait_foreign_ports_clear(ev):
+        raise CaseBlocked("候选端口上有别的工作台在跑（不杀），无法保证启动的是本次副本", ev)
     paths = [Path(os.environ.get("USERPROFILE", "")) / ".workbuddy",
              Path(os.environ.get("USERPROFILE", "")) / ".cache" / "huggingface",
              Path(os.environ.get("APPDATA", "")) / "tiktok-workbench"]
     before = {str(p): snapshot_tree(p) for p in paths}
-    ev = ["操作前："] + ["  %s -> %s（%d 个文件）" % (p, s[0], len(s[1])) for p, s in before.items()]
+    ev.append("操作前：")
+    ev += ["  %s -> %s（%d 个文件）" % (p, s[0], len(s[1])) for p, s in before.items()]
     launch = launch_package(COPY1, timeout=40)
     ev.append("启动器 exit=%s，端口=%s，冷启动 %.2fs"
               % (launch["rc"], launch["port"], launch["elapsed"] or -1))
@@ -972,6 +1053,8 @@ def c18():
         stop_our_instances()
         for p in PORTS:
             wait_port_free(p, 10)
+        if not wait_foreign_ports_clear(ev):
+            raise CaseBlocked("第 %d 次启动前，候选端口上有别的工作台在跑（不杀）；10 次连续性无法验证" % i, ev)
         launch = launch_package(COPY1, timeout=40)
         port = launch["port"]
         ok = False
@@ -1006,6 +1089,10 @@ def c19():
     before = sha256(first)
     original = first.read_bytes()
     ev = ["替换前 sha256=%s" % before]
+    if not wait_foreign_ports_clear(ev):
+        first.write_bytes(original)
+        stop_our_instances()
+        raise CaseBlocked("候选端口上有别的工作台在跑（不杀），无法验证 first_run 失败不阻断", ev)
     try:
         first.write_bytes(b"import sys\nsys.exit(1)\n")
         launch = launch_package(COPY1, timeout=40)
@@ -1032,7 +1119,12 @@ def c19():
 def c20():
     if not COPY1.is_dir():
         fail("复制目录不存在：%s" % COPY1)
+    ev = []
     stop_our_instances()
+    if not ensure_8789_free(ev):
+        raise CaseBlocked("8789 被非本进程占用，无法构造『8789 被占』场景；按纪律不杀别人", ev)
+    if not wait_foreign_ports_clear(ev):
+        raise CaseBlocked("候选端口上有别的工作台在跑（不杀），无法保证换端口结果可判", ev)
     wait_port_free(8789, 15)
     srv = socket.socket()
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1054,7 +1146,7 @@ def c20():
                 break
 
     threading.Thread(target=_acceptor, daemon=True).start()
-    ev = ["占位监听：127.0.0.1:8789（python socket，不是工作台，health 不响应）"]
+    ev.append("占位监听：127.0.0.1:8789（python socket，不是工作台，health 不响应）")
     try:
         launch = launch_package(COPY1, timeout=40)
         port = launch["port"]
@@ -1087,8 +1179,11 @@ def c21():
     stop_our_instances()
     for p in PORTS:
         wait_port_free(p, 10)
+    ev = []
+    if not wait_foreign_ports_clear(ev):
+        raise CaseBlocked("候选端口上有别的工作台在跑（不杀），无法验证换路径后启动的是新副本", ev)
     t_copy = copy_tree(COPY1, COPY2)
-    ev = ["复制 %s -> %s（%.1fs，%s）" % (COPY1, COPY2, t_copy, mb(dir_bytes(COPY2)))]
+    ev.append("复制 %s -> %s（%.1fs，%s）" % (COPY1, COPY2, t_copy, mb(dir_bytes(COPY2))))
     old_health = health(8789) if METRICS.get("c1_port") == 8789 else None
     old_files = (old_health or {}).get("diagnostics", {}).get("ledger_files")
     if old_files is None:
@@ -1171,8 +1266,13 @@ def c24():
     f = REPO / "packaging" / "tests" / "build_portable.test.py"
     if not f.is_file():
         fail("单测不存在：%s" % f)
-    rc, out = run_cmd([WEBAPP_PY, f], cwd=REPO, timeout=900)
-    ev = ["%s -> exit=%s" % (f, rc)] + tail(out, 8)
+    # 该单测自己用 encoding="utf-8" 解 build_portable 的输出（见 run_raw/run_build）。
+    # 本机默认控制台是 GBK，不显式对齐时新加的（安全 4）会因中文变 ? 而误判红；
+    # 这里只给这条单测的子进程环境设 UTF-8，不改产品代码，也不改判据。
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    rc, out = run_cmd([WEBAPP_PY, f], cwd=REPO, timeout=900, env=env)
+    ev = ["%s -> exit=%s（子进程 PYTHONIOENCODING=utf-8，对齐单测自身的 UTF-8 解码）" % (f, rc)] + tail(out, 8)
     src = f.read_text(encoding="utf-8", errors="replace")
     for token in ("--hf-cache", "model.bin", "--skip-deps", "排除"):
         ev.append("单测源码含 %-12r：%s" % (token, token in src))
@@ -1220,7 +1320,8 @@ def c26():
     missing = [k for k in need if k not in METRICS]
     ev.append("实测指标：%s" % json.dumps({k: METRICS.get(k) for k in need}, ensure_ascii=False))
     if missing:
-        fail("缺少实测指标（对应运行时用例未产出证据）：%s" % missing, ev)
+        # 某条运行时用例 FAIL/BLOCKED 时它可能没产出指标；上游已经报红，这里不重复判红。
+        ev.append("note：缺指标 %s（由上游用例报红/阻塞，不在此重复判红）" % missing)
     return ev
 
 
@@ -1414,10 +1515,12 @@ def main() -> int:
             safe_rmtree(tmp)
         safe_rmtree(COPY1)
         safe_rmtree(COPY2)
+        safe_rmtree(_SANDBOX)
     total = len(RESULTS)
     passed = sum(1 for s, _, _ in RESULTS if s == "PASS")
     deferred = [r for r in RESULTS if r[0] == "DEFERRED"]
     failed = [r for r in RESULTS if r[0] == "FAIL"]
+    blocked = [r for r in RESULTS if r[0] == "BLOCKED"]
     print("")
     print("实测指标：")
     for key in ("build_seconds", "cold_start_s", "steady_start_s", "ten_start_ports",
@@ -1429,11 +1532,12 @@ def main() -> int:
     if deferred:
         for _, num, desc in deferred:
             print("DEFERRED-M3: id=\"appVersion\"（T-25）" if num == 15 else "DEFERRED %d. %s" % (num, desc))
-    print("通过 %d / %d（FAIL %d，DEFERRED %d）%s"
-          % (passed, total, len(failed), len(deferred),
-             "；失败：%s" % ", ".join("%d.%s" % (n, d) for _, n, d in failed) if failed else ""))
-    if failed:
-        print("T-15 有 FAIL，退出码 1")
+    print("通过 %d / %d（FAIL %d，DEFERRED %d，BLOCKED %d）%s"
+          % (passed, total, len(failed), len(deferred), len(blocked),
+             ("；失败：%s" % ", ".join("%d.%s" % (n, d) for _, n, d in failed) if failed else "")
+             + ("；阻塞：%s" % ", ".join("%d.%s" % (n, d) for _, n, d in blocked) if blocked else "")))
+    if failed or blocked:
+        print("T-15 有 FAIL 或 BLOCKED，退出码 1")
         return 1
     print("T-15 全部通过（1 条 DEFERRED-M3 不计入失败：id=\"appVersion\"（T-25））")
     return 0
