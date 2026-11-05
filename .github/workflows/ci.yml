@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  syntax:
+    name: Syntax checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # 只做语法层面的检查：不需要装 fastapi/torch 这些依赖，几十秒能跑完。
+      - name: Python syntax (compileall)
+        run: python -m compileall -q pipeline webapp first_run.py
+
+      - name: JSON files parse
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          skip = {".git", ".venv", "node_modules"}
+          bad = []
+          for path in pathlib.Path(".").rglob("*.json"):
+              if skip & set(path.parts):
+                  continue
+              try:
+                  json.loads(path.read_text(encoding="utf-8"))
+              except Exception as exc:  # noqa: BLE001
+                  bad.append(f"{path}: {exc}")
+          if bad:
+              print("\n".join(bad))
+              sys.exit(1)
+          print("JSON OK")
+          PY
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Frontend syntax (node --check)
+        run: |
+          set -e
+          for f in webapp/static/*.js; do
+            node --check "$f"
+          done
+          echo "JS OK"
