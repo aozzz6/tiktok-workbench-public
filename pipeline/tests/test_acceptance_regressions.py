@@ -147,7 +147,12 @@ class AcceptanceTests(unittest.TestCase):
                 return iter([types.SimpleNamespace(start=0,end=1,text='A complete transcript exceeding thirty characters.')]), types.SimpleNamespace(duration=1)
         fake = types.SimpleNamespace(WhisperModel=Model)
         out = io.StringIO()
-        with patch.object(sys, 'argv', ['batch', '--audio-dir', str(audio), '--backend', 'faster', '--lang', 'en', *extra]), patch.dict(sys.modules, {'faster_whisper':fake}), patch.object(bt,'setup_cuda_dll_paths',return_value=[]), patch.object(bt,'cuda_device_count',return_value=1), contextlib.redirect_stdout(out):
+        # CRD-0006：给走 `--backend faster` 的 5 个用例（stale_done / missing_transcript /
+        # successful_retry / transcription_failure / japanese_language_alias）把
+        # `model_cache.ensure_model` 打成桩 —— 它们验证的是转写/断点/语言逻辑，不该依赖
+        # "本机有没有 faster-whisper 模型"，否则换台机器就红（没模型时还会真的去联网下载）。
+        fake_model = self.root / 'fake_model'
+        with patch.object(sys, 'argv', ['batch', '--audio-dir', str(audio), '--backend', 'faster', '--lang', 'en', *extra]), patch.dict(sys.modules, {'faster_whisper':fake}), patch.object(bt,'setup_cuda_dll_paths',return_value=[]), patch.object(bt,'cuda_device_count',return_value=1), patch.object(bt.model_cache,'ensure_model',return_value=fake_model), contextlib.redirect_stdout(out):
             rc = bt.main()
         return rc, json.loads(out.getvalue().splitlines()[-1]), calls, td
 
@@ -176,13 +181,24 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(next(c for c in calls if c[0]=='transcribe')[2]['language'],'ja')
 
     def test_cpu_backend_explicitly_uses_cpu(self):
-        from unittest.mock import Mock
-        model=types.SimpleNamespace(transcribe=lambda *args,**kw:{'segments':[{'start':0,'end':1,'text':'Complete CPU transcript over thirty characters.'}]})
-        load=Mock(return_value=model)
-        with patch.dict(sys.modules,{'whisper':types.SimpleNamespace(load_model=load)}):
-            rc,summary,calls,td=self.transcribe_run({'done':{}},extra=['--backend','openai','--device','cpu'])
-        self.assertEqual(rc,0)
-        load.assert_called_once_with('medium',device='cpu')
+        """CRD-0006（2026-11-06，QA 改写）：`--backend openai` 后端**已退役**（ADR-0002：包里不带
+        openai-whisper/PyTorch），旧断言「退 0 且调用 `whisper.load_model`」被本作业有意作废。
+        新判据 = T-20 DoD 1(a)：退出码 2、stderr 有一句可读提示（含「只带 faster-whisper」）、
+        没有 Traceback / ModuleNotFoundError。不加载模型、不联网。
+        """
+        audio = self.root / 'audio_openai'
+        audio.mkdir()
+        (audio / f'probe_{self.vid}.mp3').write_bytes(b'fake-audio')
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(sys, 'argv', ['batch', '--audio-dir', str(audio),
+                                        '--backend', 'openai']), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = bt.main()
+        err_text = err.getvalue()
+        self.assertEqual(rc, 2, f'--backend openai 已退役，应退出码 2，实得 {rc}；stderr={err_text!r}')
+        self.assertIn('只带 faster-whisper', err_text)
+        self.assertNotIn('Traceback', err_text)
+        self.assertNotIn('ModuleNotFoundError', err_text)
 
     def scrape_run(self, ids, old=None, fail=False):
         path = self.out/'scrape_probe.json'
