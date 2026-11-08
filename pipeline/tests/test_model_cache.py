@@ -415,6 +415,36 @@ check("HF_HUB_OFFLINE=0 发生在 import hub 之前（import 时序）",
       _download_sets_offline_before_import)
 
 
+def _download_sys_modules_stub():
+    """DoD 2 的字面写法：把 huggingface_hub 预置成桩放进 sys.modules，不打桩
+    `_import_hub`，断言桩里看到的 offline 已经是 0。"""
+    tmp = Path(tempfile.mkdtemp(prefix="t19_stub_"))
+    try:
+        with clean_env(HF_HUB_CACHE=str(tmp)):
+            stub = types.ModuleType("huggingface_hub")
+            seen = {}
+
+            def snapshot_download(**kwargs):
+                seen["offline"] = os.environ.get("HF_HUB_OFFLINE")
+                make_snapshot(tmp, size=mc.MIN_MODEL_BYTES)
+                return str(tmp)
+
+            stub.snapshot_download = snapshot_download
+            stub.constants = types.SimpleNamespace(HF_HUB_CACHE=str(tmp))
+            sys.modules["huggingface_hub"] = stub
+            lines, reporter = collect()
+            got = mc.ensure_model("medium", allow_download=True, reporter=reporter)
+            assert_(seen.get("offline") == "0",
+                    "sys.modules 桩里看到的 HF_HUB_OFFLINE 应为 0，实得 %r" % (seen.get("offline"),))
+            assert_(Path(got).is_dir(), "应返回快照目录")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+check("sys.modules 预置 huggingface_hub 桩：下载时 offline 已是 0",
+      _download_sys_modules_stub)
+
+
 def _download_insufficient():
     tmp = Path(tempfile.mkdtemp(prefix="t19_dlbad_"))
     orig = mc._snapshot_download
