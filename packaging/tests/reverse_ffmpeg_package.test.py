@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -33,7 +34,8 @@ import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-PKG = REPO / "build" / "portable" / "slim"
+# 默认就是 DoD 指定的构建产物；T28_PKG_DIR 只用于演示"缺包 → 退出码 2"（不 SKIP）。
+PKG = Path(os.environ.get("T28_PKG_DIR") or (REPO / "build" / "portable" / "slim"))
 PY = PKG / "python" / "python.exe"
 BOOT = PKG / "webapp" / "_boot.py"
 FFMPEG = PKG / "ffmpeg" / "bin" / "ffmpeg.exe"
@@ -57,6 +59,11 @@ FRESH_FILES = (
 )
 READY_TIMEOUT = 180.0
 START_TIMEOUT = 40.0
+# 本用例会临时改名包内 ffmpeg.exe，两个实例同时跑必然互相踩；用锁串行化
+# （QA 的 qa\T-28\run.py 也会调用它）。
+LOCK = Path(tempfile.gettempdir()) / (
+    "t28_reverse_%s.lock" % hashlib.sha1(str(PKG).lower().encode("utf-8")).hexdigest()[:12])
+LOCK_TIMEOUT = 300.0
 
 
 def say(text: str) -> None:
@@ -69,6 +76,69 @@ def fail(text: str) -> int:
 
 
 # ────────────────────────── 前置检查 ──────────────────────────
+def acquire_lock() -> bool:
+    deadline = time.time() + LOCK_TIMEOUT
+    while time.time() < deadline:
+        try:
+            fd = os.open(str(LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode("ascii"))
+            os.close(fd)
+            return True
+        except FileExistsError:
+            try:
+                if time.time() - LOCK.stat().st_mtime > 3600:
+                    LOCK.unlink(missing_ok=True)      # 崩溃留下的旧锁
+                    continue
+            except OSError:
+                pass
+            time.sleep(2.0)
+    return False
+
+
+def release_lock() -> None:
+    try:
+        LOCK.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def heal_ffmpeg() -> None:
+    """上一次崩溃可能把 ffmpeg.exe 留在 .bak：先自愈，否则连成功路径都跑不了。"""
+    if FFMPEG_BAK.exists() and not FFMPEG.exists():
+        os.replace(str(FFMPEG_BAK), str(FFMPEG))
+        say("[T-28] 自愈：把残留的 ffmpeg.exe.bak 恢复为 ffmpeg.exe")
+
+
+def rename_ffmpeg_away(tries: int = 6) -> None:
+    """把包内 ffmpeg.exe 改名；容忍另一个（旧版、没锁的）实例正在恢复它。"""
+    last = ""
+    for _ in range(tries):
+        if FFMPEG_BAK.exists() and not FFMPEG.exists():
+            return
+        if FFMPEG.exists() and not FFMPEG_BAK.exists():
+            try:
+                os.replace(str(FFMPEG), str(FFMPEG_BAK))
+                return
+            except OSError as exc:                                  # noqa: BLE001
+                last = repr(exc)
+        else:
+            last = "exe=%s bak=%s" % (FFMPEG.exists(), FFMPEG_BAK.exists())
+        time.sleep(2.0)
+    raise RuntimeError("包内 ffmpeg.exe 改名失败（疑似有并发实例在恢复它）：" + last)
+
+
+def restore_ffmpeg(strict: bool) -> None:
+    """把 ffmpeg.exe 从 .bak 恢复；若并发实例已经恢复过，就不再报错。"""
+    if FFMPEG_BAK.exists():
+        os.replace(str(FFMPEG_BAK), str(FFMPEG))
+        return
+    if FFMPEG.exists():
+        say("[T-28] 注意：ffmpeg.exe 已被并发实例恢复（.bak 不在了），继续")
+        return
+    if strict:
+        raise RuntimeError("包内 ffmpeg.exe 与 ffmpeg.exe.bak 都不见了")
+
+
 def check_preconditions() -> bool:
     missing = [str(p) for p in (PKG, PY, BOOT, FFMPEG, BUILD_INFO, PKG / "webapp" / "app.py")
                if not p.exists()]
@@ -301,17 +371,22 @@ def run_expected_failure(port: int, fixture: Path, created: list) -> dict:
 
 # ────────────────────────── 主流程 ──────────────────────────
 def main() -> int:
-    if not check_preconditions():
+    if not acquire_lock():
+        say("[FAIL] 另一个 T-28 验收正在跑（锁 %s），本次不并发运行。" % LOCK)
         return 2
-    say("[T-28] 包：%s" % PKG)
-    tmpdir = Path(tempfile.mkdtemp(prefix="t28_reverse_"))
-    port = pick_port()
-    say("[T-28] 端口：%d（避开 8789）" % port)
-    fixture = tmpdir / "fixture.mp4"
-    created_vids = []
+    tmpdir = None
+    port = 8794
     proc = None
-    renamed = False
+    created_vids = []
     try:
+        heal_ffmpeg()
+        if not check_preconditions():
+            return 2
+        say("[T-28] 包：%s" % PKG)
+        tmpdir = Path(tempfile.mkdtemp(prefix="t28_reverse_"))
+        port = pick_port()
+        say("[T-28] 端口：%d（避开 8789）" % port)
+        fixture = tmpdir / "fixture.mp4"
         # 1) 用包内 ffmpeg 造素材
         made = subprocess.run(
             [str(FFMPEG), "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25",
@@ -338,8 +413,7 @@ def main() -> int:
         # 3) 改名 + 重启 → 必须失败
         stop_service(proc, port)
         proc = None
-        os.replace(str(FFMPEG), str(FFMPEG_BAK))
-        renamed = True
+        rename_ffmpeg_away()
         say("[T-28] 已把包内 ffmpeg.exe 改名为 ffmpeg.exe.bak，重启服务……")
         proc = start_service(port, env)
         wait_health(port)
@@ -348,8 +422,7 @@ def main() -> int:
         # 4) 恢复 + 重启 → 再成功一次
         stop_service(proc, port)
         proc = None
-        os.replace(str(FFMPEG_BAK), str(FFMPEG))
-        renamed = False
+        restore_ffmpeg(strict=True)
         say("[T-28] 已恢复包内 ffmpeg.exe，重启服务……")
         proc = start_service(port, env)
         wait_health(port)
@@ -362,15 +435,18 @@ def main() -> int:
         return 1
     finally:
         stop_service(proc, port)
-        if renamed and FFMPEG_BAK.exists():
-            os.replace(str(FFMPEG_BAK), str(FFMPEG))
+        # 无论从哪一步失败，都不许把包里的 ffmpeg.exe 留在 .bak（哪怕是被别的进程改名）
+        if FFMPEG_BAK.exists():
+            restore_ffmpeg(strict=False)
             say("[T-28] 清理：已恢复包内 ffmpeg.exe")
         for vid in created_vids:
             target = REVERSE / str(vid)
             shutil.rmtree(target, ignore_errors=True)
-        shutil.rmtree(tmpdir, ignore_errors=True)
+        if tmpdir is not None:
+            shutil.rmtree(tmpdir, ignore_errors=True)
         say("[T-28] 清理：进程已停、端口 %d 空闲=%s、删除 %d 个任务目录"
             % (port, port_free(port), len(created_vids)))
+        release_lock()
 
 
 if __name__ == "__main__":
