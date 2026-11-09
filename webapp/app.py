@@ -83,8 +83,31 @@ _accounts_cache: dict = {"ts": 0.0, "data": None}
 
 @app.get("/api/health")
 def health() -> dict:
-    """健康检查 + 接口版本指纹（启动器据此判断是否需要重启，见 R6）。"""
+    r"""健康检查 + 接口版本指纹（启动器据此判断是否需要重启，见 R6）。
+
+    ★ M3（T-25）：带包根（= `webapp\` 的上一级）`VERSION` 里的版本号，页面右上角显示它。
+
+    ★ 安全评审（2026-11）：`VERSION` 是**不可信文件**（包可能被解压到多用户可写目录，
+      任何本地进程都能 GET /api/health）。所以这里：
+        ① 符号链接一律给 `"0.0.0"` —— 否则它可能被换成指向 `workbuddy\models.json`
+          （里面有 LLM key）的链接，请求一次 health 就把凭据读出来了；
+        ② 只读**前 64 字节** —— 换成大文件也不会被整读、被轮询拖慢；
+        ③ 只接受 `数字.数字.数字`，其它内容（换行、路径、垃圾）一律 `"0.0.0"`。
+      任何一条不满足都给 `"0.0.0"`，健康检查本身绝不抛异常。
+    """
+    version = "0.0.0"
+    try:
+        version_path = config.WEBAPP_DIR.parent / "VERSION"
+        if not version_path.is_symlink():
+            with open(version_path, "rb") as f:
+                raw = f.read(64)                       # ② 只读前 64 字节
+            text = raw.decode("utf-8").strip()
+            if re.fullmatch(r"\d+\.\d+\.\d+", text):    # ③ 只认 x.y.z
+                version = text
+    except (OSError, UnicodeError, ValueError):
+        version = "0.0.0"
     return {"ok": True, "ts": time.time(), "api_version": API_VERSION,
+            "version": version,
             "features": list(API_FEATURES), "diagnostics": config.diagnostics()}
 
 
@@ -571,8 +594,17 @@ def _build_pipeline_cmd(p: dict) -> list[str]:
             raise ValueError("开始日期不能晚于结束日期")
     except (ValueError, TypeError) as e:
         raise HTTPException(400, f"账号或日期无效: {e}")
-    if p.get("backend") and p["backend"] not in ("auto", "faster", "openai"):
-        raise HTTPException(400, "不支持的转写后端")
+    # 2026-11-08（T-20 / CRD-0006）：openai 转写后端已退役（脚本遇到它会直接退 2）。
+    # 但老前端下拉（index.html 的「openai（CPU 兜底，慢）」）和旧调用方仍可能带这个值；
+    # 这里按 auto 执行并留一行日志 —— 绝不让整轮日更 /「一键运行」因为一个已退役的
+    # 后端名而整体失败。非法值仍然 400。
+    if p.get("backend"):
+        if p["backend"] == "openai":
+            print("[run] backend=openai 已退役（本包只带 faster-whisper），按 auto 执行",
+                  flush=True)
+            p = {**p, "backend": "auto"}
+        elif p["backend"] not in ("auto", "faster"):
+            raise HTTPException(400, "不支持的转写后端（只支持 auto / faster；openai 已退役）")
     ledger = config.ledger_path()
     xlsx = p.get("xlsx") or (str(ledger) if ledger else "")
     if not xlsx:

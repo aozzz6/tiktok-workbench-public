@@ -26,7 +26,7 @@ jobs:
 
       # 只做语法层面的检查：不需要装 fastapi/torch 这些依赖，几十秒能跑完。
       - name: Python syntax (compileall)
-        run: python -m compileall -q pipeline webapp first_run.py
+        run: python -m compileall -q pipeline webapp packaging first_run.py
 
       - name: JSON files parse
         run: |

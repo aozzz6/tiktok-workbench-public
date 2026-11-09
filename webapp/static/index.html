@@ -280,9 +280,8 @@
           </label>
           <label>转写后端
             <select id="run-backend" title="auto：有显卡走 GPU（2026-10-14 起约 7x 加速）；无显卡自动回落 CPU">
-              <option value="auto" selected>auto（有显卡走 GPU，推荐）</option>
-              <option value="openai">openai（CPU 兜底，慢）</option>
-              <option value="faster" disabled>faster（本机 CPU 会崩，已禁用）</option>
+              <option value="auto" selected>auto（推荐）</option>
+              <option value="faster">faster（只用 CPU）</option>
             </select>
             <span class="muted hint-inline">auto：有显卡走 GPU，约 7x 加速</span>
           </label>
@@ -466,6 +465,10 @@
   </div>
 </div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
+<!-- M3（T-25）：页面右上角的版本号；取 /api/health 的 version（包根 VERSION）-->
+<div id="appVersion" class="muted" title="工作台版本"
+     style="position:fixed;top:10px;right:14px;z-index:60;font-size:12px;opacity:.75"></div>
+<script>fetch("/api/health").then(r=>r.json()).then(d=>{var el=document.getElementById("appVersion");if(el&&d&&d.version)el.textContent=String(d.version);}).catch(()=>{});</script>
 <script src="/static/bench2/derive.js?v=20261028S96"></script>
   <script src="/static/bench2/bcore.js?v=20261028S96"></script>
   <script>window.ARCH = window.ARCH || {};</script>

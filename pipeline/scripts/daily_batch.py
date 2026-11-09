@@ -608,7 +608,7 @@ def run_account(acc: dict, date_from: str, date_to: str, retry: int,
         "date_to": date_to,
         "steps": list(DAILY_STEPS),
         "lang": acc.get("lang") or "en",
-        "backend": "openai",
+        "backend": "faster",
         "allow_scrape_errors": True,
         # ★ 必须带 no_resume（2026-10-20 实测踩坑）：pipeline_state 的 key 是
         #   "{account}|{step}"，skip 判定只看 rec.ok 不看日期（仅图文 s2 比 date_range）。

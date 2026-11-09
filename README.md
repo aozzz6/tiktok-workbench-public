@@ -34,13 +34,14 @@ starts a daily batch by itself, scraping and translating on a timer.
 | `pipeline/` | The collection pipeline: scrape → download audio → transcribe → translate → write ledger. Plain Python scripts. Most run standalone; `daily_batch.py` is the exception — see below. |
 | `pipeline/output/` | Collected artifacts: `scrape_<account>.json`, `<account>_audio/`, transcripts. Not in git. |
 | `qa/` | Acceptance cases for the current change (`qa/T-*`), the shared runner `qa/run-all.ps1`, and the standing gap list `qa/gaps.md`. |
-| `reverse/` | Scratch space for reverse-engineering work. Only `reverse/<video id>/` and `reverse/_uploads/` are git-ignored — the folder itself is tracked. |
+| `reverse/` | Scratch space for reverse-engineering work. **Not tracked by git** — the app creates it on first use. |
 
 The **Excel ledger is the source of truth** for the analysis (14 columns, one sheet
-per account). It lives outside the repository. Its path is the `xlsx` field of
-`pipeline/accounts.json`; if that is absent or points at nothing, the webapp falls
-back to the newest `.xlsx` in `LEDGER_DIR` (`webapp/config.py:25`, default
-`D:/1/对标账号`).
+per account). Its path is the `xlsx` field of `pipeline/accounts.json`; if that is
+absent or points at nothing, the webapp falls back to the newest `.xlsx` in
+`LEDGER_DIR` (`webapp/config.py:42`, default `<package>\ledger`). `start.bat` only
+overrides that default when `D:\1\对标账号` happens to exist (that is the author's own
+folder); to keep the ledger anywhere else, set `WB_LEDGER_DIR`.
 
 **The ledger file must sit inside `LEDGER_DIR`.** That is the only place
 `config.ledger_path()` looks — an `.xlsx` elsewhere is silently not found. To keep
@@ -99,6 +100,66 @@ command above needs no extra flags.
 
 `pip freeze` inside `pipeline\.venv` is still the complete list of what is actually
 installed there.
+
+## Portable package (green build for users who have no Python)
+
+The two ZIPs under `dist\` are the end-user product: unzip, double-click, nothing to
+install and — **by design** — no administrator rights. That design goal is *not yet
+verified on a clean machine or a standard user account* (`qa/gaps.md` #24 and #26).
+The user manual ships inside every package
+(`packaging\templates\使用说明.md`, copied to the package root as `使用说明.md`).
+
+One command builds both flavours and zips them, from a developer checkout. Two
+prerequisites: the builder must find **ffmpeg**, and the **full** flavour needs the
+transcription model already cached on this machine (a Hugging Face cache: `--hf-cache`,
+or `HF_HUB_CACHE` / `HF_HOME` / `XDG_CACHE_HOME` / `~\.cache\huggingface\hub`). Without
+that cache, build `--flavor slim` first.
+
+```bat
+rem one-time: let the builder find ffmpeg — either copy ffmpeg.exe + ffprobe.exe into
+rem pipeline\ffmpeg_bin\, or set WB_FFMPEG_DIR, or add --ffmpeg-dir "<folder>" below
+webapp\.venv\Scripts\python.exe packaging\make_zips.py
+```
+
+Output: `dist\tiktok-workbench-<VERSION>-full.zip` (carries the ~1.5 GB transcription
+model, so transcription works offline), `-slim.zip` (no model; the first transcription
+downloads ~1.5 GB), `SHA256SUMS.txt` and `build-report.json`. `--flavor slim` builds
+only the small one. `--skip-build` zips the stages already sitting in
+`build\portable\` — and exits 1 when a stage lacks its build marker, so a real build has
+to have run at least once.
+
+**The developer checkout flow is unchanged: two venvs plus `install.bat`.**
+The portable build is an extra output — it does not replace `webapp\.venv`,
+`pipeline\.venv` or `webapp\install.bat`, and a developer never needs the ZIPs.
+
+Packaging tests — one script per area, each prints `通过 N / M` and exits 0/1. A few of
+them run against a real package, so build one stage first:
+
+```bat
+webapp\.venv\Scripts\python.exe packaging\build_portable.py --flavor slim --ffmpeg-dir "<ffmpeg folder>"
+for %f in (packaging\tests\*.test.py) do @(webapp\.venv\Scripts\python.exe "%f" || exit /b 1)
+```
+
+> A few of the package cases look for `build\portable\t18` (the T-18 convention). If it is
+> missing, build it once:
+> `webapp\.venv\Scripts\python.exe packaging\build_portable.py --flavor slim --out build\portable\t18 --ffmpeg-dir "<ffmpeg folder>"`.
+
+What the package can and cannot do, stated plainly:
+
+- **Works offline:** importing a **local video** and extracting its frames, viewing the
+  ledger, benchmark analysis, and transcription (the full ZIP carries the model; it runs
+  on the CPU with int8 — a GPU path exists but is unverified, see `qa/gaps.md`).
+- **Needs internet and your own API key** (put it in through the **AI 接入 → ＋ 新增模型**
+  page, which writes `workbuddy\models.json`): AI translation, AI chat, and the
+  **reverse-engineering report** — that one runs a **remote vision model**, so it is
+  *not* offline.
+- **Pasting a TikTok link does not download anything in this version.** The downloader
+  inside the package is pinned to a developer-machine Python path, so it does not run on
+  an ordinary machine and the feature is not enabled. Download the video yourself and
+  import the **local file**.
+- **Collecting from TikTok needs your own proxy.** The workbench reuses the system proxy
+  or finds a common local proxy port (7892 / 7897 / 10809 …); to pin one, put
+  `set WB_PROXY=http://127.0.0.1:7897` in `_setenv.local.bat` (see the user manual).
 
 ## Run the dashboard
 
@@ -210,6 +271,11 @@ The runner walks every directory under `qa\`, finds an entry point in the order
 point is reported as `[WARN] … 不算通过` and the whole run exits non-zero — "no cases
 found" must never look like a pass.
 
+> **Baseline note:** `qa/run-all.ps1` stays red in this repository — `qa/T-04` pins a
+> commit that is not in this history and `test_publish_artifacts.py` is 7/13 (see
+> `qa/gaps.md` #21). A green `run-all` is therefore **not** the baseline here; run the
+> individual `qa\T-*` cases for the change you are working on.
+
 ## What is deliberately not in git
 
 Runtime data, environments and local binaries are excluded on purpose: `.venv/`,
@@ -221,8 +287,9 @@ account list), `pipeline/pipeline_state.json`, `pipeline/gate_report.json`,
 **Session cookies must never be committed.** `.gitignore` covers cookie files,
 including the `*cookie*.txt` pattern — so a name like `cc_cookie.txt` is caught too;
 check `git ls-files` before you commit, because a cookie file matched by none of those
-patterns will be picked up. (One such file has been tracked in this repository's
-history already — see `qa/gaps.md` #15. Do not add another.)
+patterns will be picked up. (An *upstream private* repository once tracked one; this
+public export is a fresh history and has never contained it — see `qa/gaps.md` #15.
+Do not add the first.)
 
 Because `pipeline/accounts.json` is not tracked, **it cannot be rolled back with
 git**. Copy it before changing it — the project habit is a `_bak_<topic>_<date>/`
@@ -236,10 +303,10 @@ Two things will not be there, because they are intentionally not in git:
 
    ```json
    {"accounts": [{"account": "<name>", "lang": "en", "active": true}],
-    "xlsx": "D:/1/对标账号/<your ledger>.xlsx"}
+    "xlsx": "<package>/ledger/<your ledger>.xlsx"}
    ```
 
-   The `.xlsx` must be inside `LEDGER_DIR` (default `D:/1/对标账号`) — see the note
+   The `.xlsx` must be inside `LEDGER_DIR` (default `<package>\ledger`) — see the note
    in the section above. `webapp/config.py` has `add_account()`, and the web UI has
    a "＋ 新增账号" button, if you prefer to create the file from the app.
 2. The Excel ledger itself, in `LEDGER_DIR` (or wherever `WB_LEDGER_DIR` points).
@@ -302,7 +369,7 @@ installer puts it at `%LOCALAPPDATA%\Programs\Python\Python313\python.exe`.
 ### The seven environment variables
 
 `webapp/config.py` reads `WB_PIPELINE_DIR` (`:20`), `WB_PYTHON` (`:21`),
-`WB_HOME` (`:22`), `WB_PROXY` (`:23`) and `WB_LEDGER_DIR` (`:25`);
+`WB_HOME` (`:22`), `WB_PROXY` (`:40`) and `WB_LEDGER_DIR` (`:42`);
 `webapp/tk_reverse.py` reads `WB_REVERSE_DIR` (`:47`) and `WB_YTDLP` (`:50-52`).
 Set them in your shell (or inside `start.bat`) before you start the dashboard.
 
@@ -311,7 +378,7 @@ Set them in your shell (or inside `start.bat`) before you start the dashboard.
 | `WB_PIPELINE_DIR` | your `pipeline` directory (default: the author's) |
 | `WB_PYTHON` | the interpreter that runs the pipeline (default: `pipeline\.venv` under `WB_PIPELINE_DIR`) |
 | `WB_HOME` | your WorkBuddy home directory (default: the author's `.workbuddy` folder) |
-| `WB_LEDGER_DIR` | the folder that holds your Excel ledger (default: `D:/1/对标账号`) |
+| `WB_LEDGER_DIR` | the folder that holds your Excel ledger (default: `<package>\ledger`; `start.bat` overrides it only when `D:\1\对标账号` exists) |
 | `WB_PROXY` | proxy override for the dashboard **and** the scraper; when unset, both auto-detect (system proxy, then common local ports) |
 | `WB_REVERSE_DIR` | the reverse-engineering scratch folder (default: the author's `D:/workbuddy_project/tiktok/reverse`) |
 | `WB_YTDLP` | the `yt-dlp.exe` that view uses (default: the author's WorkBuddy binaries folder) |
@@ -326,10 +393,10 @@ before the first request. Point it at any writable folder of your own.
 
 Each of these is a path on the author's disk. Change the path, keep the key:
 
-1. `pipeline/pipeline.py:36` — `"python"`: the interpreter that runs each pipeline
+1. `pipeline/pipeline.py:39` — `"python"`: the interpreter that runs each pipeline
    step.
-2. `pipeline/pipeline.py:41` — `"output_root"`: where scraping writes its output.
-3. `pipeline/daily_update.py:44` — `PY`: the same interpreter, used by the daily
+2. `pipeline/pipeline.py:46` — `"output_root"`: where scraping writes its output.
+3. `pipeline/daily_update.py:45` — `PY`: the same interpreter, used by the daily
    run.
 
 Those three are the **main chain only**. More than a dozen helper and historical
@@ -409,11 +476,14 @@ Two things about that file:
 - `DEPLOY_CHECKLIST.md` — **the deploy self-check**: run its one-minute check right after
   installing. It catches most of the traps up front (interpreter, proxy port, ledger location,
   test baselines, the WAF fallback).
-- `DEPLOY_GUIDE.md` — moving the dashboard-only copy to another machine. Note that
-  it still says port 8787 and 15 columns; both are out of date (8789, 14 columns).
-- `工作上下文归档_最新.md` — working context: fixed rules, paths, interpreters.
+- `DEPLOY_GUIDE.md` — moving a dashboard-only copy to another machine (port 8789,
+  14 columns, ledger in `ledger\`). For an end user, use the ZIP described under
+  **Portable package** above instead.
 - `qa/gaps.md` — what the current change's tests could **not** verify, and why.
-- `LICENSE` — MIT. **Before you publish, replace `<YOUR NAME>` in the copyright line
-  with your own name.**
-- `THIRD_PARTY_NOTICES.md` — the third-party assets (font, chart library) and the
-  licenses they stay under; MIT does not cover them.
+- **Licensing.** The repository's own source code is **MIT**; the copyright line in
+  `LICENSE` is `Copyright (c) 2026 aozzz6` — keep it as-is when you redistribute the
+  repository, and only replace it with your own name if you fork and change the code.
+  A released ZIP is **not**
+  MIT-only: it bundles **ffmpeg** and the FFmpeg libraries inside **PyAV**, both under
+  **GPLv3**, so redistributing a ZIP means shipping the GPLv3 text and the
+  corresponding-source offer — see `THIRD_PARTY_NOTICES.md`.

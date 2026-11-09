@@ -98,7 +98,9 @@ def _dirty_env():
 
 def _env_kept():
     env = runner.MANAGER._child_env(CHILD)
-    assert_(env.get("HF_HUB_OFFLINE") == "1", "run_env 的离线开关丢了")
+    # ADR-0008（2026-11-05，T-27 / CRD-0003）：run_env() 不再写 HF_HUB_OFFLINE，
+    # 离线与否由子进程的 model_cache 决定；父环境残留的键也不许透传。
+    assert_("HF_HUB_OFFLINE" not in env, "run_env() 不该再带 HF_HUB_OFFLINE（ADR-0008）")
     assert_(env.get("HTTPS_PROXY"), "run_env 的代理丢了")
 
 
@@ -109,7 +111,7 @@ check("环境变量名两侧一致（webapp/config 与 pipeline/daily_batch 各�
 check("顶层 run：下传自己的租约（daily_batch 子 POST 并入自己的租约，2026-10-31 自锁修复）", _top_own)
 check("无租约的 run：环境里不留该变量", _bare_no)
 check("外部环境里的脏令牌会被清掉（不能靠 env 伪造 owner）", _dirty_env)
-check("下传只加一个键，run_env 的代理/离线开关仍在", _env_kept)
+check("下传只加一个键，run_env 的代理仍在、不再强制离线", _env_kept)
 
 
 # ── 2. app._lease_owner ───────────────────────────────────────

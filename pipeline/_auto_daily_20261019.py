@@ -2,14 +2,14 @@
 """Daily incremental driver 2026-10-19 (automation 878024fb).
 Serial per-account pipeline via webapp API, retry once on failure after 180s,
 product extraction per region rule (us/uk/unset only), final verify."""
-import json, time, os, subprocess, datetime, urllib.request
+import json, time, os, sys, subprocess, datetime, urllib.request
 
 BASE = "http://127.0.0.1:8787"
 OP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 ACC_FILE = r"D:/workbuddy_project/tiktok/pipeline/accounts.json"
 LOG = r"D:/workbuddy_project/tiktok/pipeline/reports/auto_daily_20261019.log"
 PIPE_DIR = r"D:\workbuddy_project\tiktok\pipeline"
-PY_EXTRACT = r"C:\Users\Administrator\.workbuddy\binaries\python\envs\tiktok\Scripts\python.exe"
+PY_EXTRACT = os.environ.get("WB_PYTHON") or sys.executable
 EXTRACT = os.path.join(PIPE_DIR, "scripts", "extract_products.py")
 PY_VERIFY = r"D:\workbuddy_project\tiktok\webapp\.venv\Scripts\python.exe"
 POSTUP = os.path.join(PIPE_DIR, "scripts", "post_update.py")

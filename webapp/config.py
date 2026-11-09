@@ -165,14 +165,128 @@ def python_exe() -> str:
     return "python"
 
 
+# ── 便携包：账号路径的**读取侧**归一（2026-11-05 T-27）────────────────────
+# 背景：`accounts.json` 里的 `out_dir`/`audio_dir` 是「创建那一刻」的绝对路径。
+# 用户把整个包换个目录（或换台电脑）后，看板/对标分析按这些路径去 glob 产物 →
+# 页面显示「没有数据」，而数据其实就在包内。这里只在**读取时**把路径换成当前包，
+# **写入侧与文件内容一个字都不动**（DoD 明确要求：归一结果绝不落盘）。
+#
+# 判据是三个条件的合取（与「旧路径是否还存在」无关）：
+#   ① 绝对路径；② 形状命中本包约定 —— out_dir 以 `pipeline\output` 结尾、
+#   audio_dir 以 `pipeline\output\<账号名>_audio` 结尾（大小写不敏感，`\` `/` 都认）；
+#   ③ 不在当前 `PIPELINE_DIR` 之下。
+# 三条全中 → 换成当前 `PIPELINE_DIR\output` / `…\<账号>_audio`；否则**原样返回**。
+def _win_abs(raw: str) -> bool:
+    r"""Windows 形状的绝对路径（`X:\…`、`\\server\share\…`）。
+
+    `Path.is_absolute()` 在 POSIX 上不认 `X:\…`，而本仓库目标就是 Windows；
+    两条都认，测试与 CI 在哪都得到同一套判据。
+    """
+    s = str(raw or "").strip()
+    if not s:
+        return False
+    if s.startswith("\\\\") or s.startswith("//"):
+        return True
+    return len(s) >= 3 and s[1] == ":" and s[2] in "\\/" and s[0].isalpha()
+
+
+def _path_is_abs(raw: str) -> bool:
+    try:
+        if Path(raw).is_absolute():
+            return True
+    except (OSError, ValueError):
+        pass
+    return _win_abs(raw)
+
+
+def _path_segments(raw: str) -> list[str]:
+    """只做字面切分（不碰文件系统）：`C:/a/pipeline//output` → ['c:','a','pipeline','output']。"""
+    return [x.lower() for x in str(raw or "").replace("/", "\\").split("\\") if x not in ("", ".")]
+
+
+def _lex_key(p) -> str:
+    """字面归一：反斜杠 + 小写 + 去掉结尾分隔符（不解析、不访问磁盘）。"""
+    return str(p or "").replace("/", "\\").rstrip("\\").lower()
+
+
+def _under_pipeline_dir(raw: str) -> bool:
+    cur = _lex_key(PIPELINE_DIR)
+    if not cur:
+        return False
+    me = _lex_key(raw)
+    return me == cur or me.startswith(cur + "\\")
+
+
+def _normalize_one_path(raw, account: str, kind: str):
+    """kind = 'out' | 'audio'。命中三个条件 → 当前包内路径；否则原值返回。"""
+    if not isinstance(raw, str) or not raw.strip():
+        return raw
+    if not _path_is_abs(raw):                                  # ①
+        return raw
+    segs = _path_segments(raw)
+    if kind == "out":
+        if segs[-2:] != ["pipeline", "output"]:                # ②
+            return raw
+        target = OUTPUT_DIR
+    else:
+        want = f"{str(account or '').lower()}_audio"
+        if segs[-3:] != ["pipeline", "output", want]:          # ②
+            return raw
+        target = OUTPUT_DIR / f"{account}_audio"
+    if _under_pipeline_dir(raw):                               # ③
+        return raw
+    return str(target)
+
+
+def normalize_account_paths(row: dict) -> dict:
+    """账号行的路径归一（返回副本；没变就原对象返回）。纯内存，不写盘。"""
+    if not isinstance(row, dict):
+        return row
+    name = str(row.get("account") or "")
+    old_out, old_aud = row.get("out_dir"), row.get("audio_dir")
+    new_out = _normalize_one_path(old_out, name, "out")
+    new_aud = _normalize_one_path(old_aud, name, "audio")
+    if new_out == old_out and new_aud == old_aud:
+        return row
+    row = dict(row)
+    if new_out != old_out:
+        row["out_dir"] = new_out
+    if new_aud != old_aud:
+        row["audio_dir"] = new_aud
+    return row
+
+
+def _normalize_accounts_cfg(cfg: dict) -> dict:
+    if not isinstance(cfg, dict):
+        return cfg
+    accs = cfg.get("accounts")
+    if not isinstance(accs, list):
+        return cfg
+    new = [normalize_account_paths(a) for a in accs]
+    if all(n is o for n, o in zip(new, accs)):
+        return cfg
+    out = dict(cfg)
+    out["accounts"] = new
+    return out
+
+
+def _read_accounts_file() -> dict:
+    """`accounts.json` 的原样内容（**不归一**）。
+
+    写侧（add/update/set_media_type/remove）必须用它：否则读取侧归一出来的
+    当前包路径会被顺手写回文件，换目录后原安装位置的信息就永远丢了。
+    """
+    return read_json(ACCOUNTS_JSON, {}) or {}
+
+
 def load_accounts(include_inactive: bool = False) -> dict:
-    """读 accounts.json。
+    """读 accounts.json（路径已按当前包归一，**不回写文件**）。
 
     include_inactive=False（缺省）时过滤掉 active=False 的账号——
     让停用账号自动退出流水线执行链，而历史产物索引仍保留在文件里。
     注：工作台 UI 需要看到全部账号（含停用），调用时传 True。
     """
-    cfg = read_json(ACCOUNTS_JSON, {}) or {}
+    cfg = _normalize_accounts_cfg(_read_accounts_file())
     if include_inactive:
         return cfg
     accs = cfg.get("accounts")
@@ -184,8 +298,8 @@ def load_accounts(include_inactive: bool = False) -> dict:
 
 
 def load_accounts_raw() -> dict:
-    """不过滤，返回文件原样（含停用账号）。"""
-    return read_json(ACCOUNTS_JSON, {}) or {}
+    """不过滤，返回文件内容（含停用账号；路径同样已按当前包归一，不回写文件）。"""
+    return _normalize_accounts_cfg(_read_accounts_file())
 
 
 # ── 账号写操作（二期） ────────────────────────────────────────────────
@@ -339,6 +453,7 @@ def account_artifacts(acc: dict, ledger_sheets: set[str] | None = None) -> dict:
     ledger_sheets: 台账中存在的 sheet 名集合（由调用方统一读一次，避免逐账号 IO）。
     """
     a = _account_norm(acc)
+    a = normalize_account_paths(a)       # T-27：旧安装位置的绝对路径 → 当前包内路径
     name = a.get("account", "")
     out_dir = Path(a["out_dir"]).resolve() if a.get("out_dir") else OUTPUT_DIR
     audio_dir = (Path(a["audio_dir"]).resolve() if a.get("audio_dir")
@@ -499,7 +614,7 @@ def add_account(name: str, fields: dict | None = None) -> dict:
     （做哪个地区就用该地区语言转写）；region 未标注且未传 lang 时默认 en。
     """
     name = validate_account_name(name)
-    cfg = load_accounts_raw()
+    cfg = _read_accounts_file()          # 写侧读原样：读取侧的归一结果绝不落盘
     accs = cfg.setdefault("accounts", [])
     if any(isinstance(a, dict) and a.get("account") == name for a in accs):
         raise ValueError(f"账号已存在：{name}")
@@ -540,7 +655,7 @@ def set_media_type(accounts, media_type: str = "image") -> dict:
     if isinstance(accounts, (str, bytes)) or not isinstance(accounts, (list, tuple)):
         raise ValueError("accounts 必须是数组")
 
-    cfg = load_accounts_raw()
+    cfg = _read_accounts_file()          # 写侧读原样：读取侧的归一结果绝不落盘
     index = {a.get("account"): a for a in cfg.get("accounts", []) if isinstance(a, dict)}
     results, saved = [], []
 
@@ -589,7 +704,7 @@ def update_account(name: str, fields: dict) -> dict:
     """改账号的可编辑字段。主键 account 只读，试图修改直接忽略。"""
     validate_account_name(name)
     fields = validate_account_fields(fields)
-    cfg = load_accounts_raw()
+    cfg = _read_accounts_file()          # 写侧读原样：读取侧的归一结果绝不落盘
     for a in cfg.get("accounts", []):
         if not isinstance(a, dict) or a.get("account") != name:
             continue
@@ -618,7 +733,7 @@ def set_account_active(name: str, active: bool) -> dict:
 def remove_account(name: str) -> None:
     """删除账号（仅限无任何产物的空壳，避免丢失历史索引）。"""
     validate_account_name(name)
-    cfg = load_accounts_raw()
+    cfg = _read_accounts_file()          # 写侧读原样：读取侧的归一结果绝不落盘
     accs = cfg.get("accounts", [])
     row = next((a for a in accs if isinstance(a, dict) and a.get("account") == name), None)
     if row is None:
@@ -713,11 +828,18 @@ def image_ledger_path() -> Path | None:
 
 
 def run_env() -> dict:
-    """子进程环境：注入代理，禁用 HF 联网检查。"""
+    """子进程环境：注入代理 + UTF-8。
+
+    ★ 2026-11-05（T-27 / ADR-0008）：**不再写 `HF_HUB_OFFLINE`**。
+      它是 `huggingface_hub` 在 import 时读一次的常量，该由子进程的
+      `model_cache`（看本机有没有模型）决定；父环境预设成 1 会把精简包的
+      首次下载钉死在离线模式（UI「一键运行」路径上必挂）。
+      父进程里若残留这个键，这里也**主动去掉**，不让它悄悄透传成"强制离线"。
+    """
     env = dict(os.environ)
     env["HTTPS_PROXY"] = PROXY
     env["HTTP_PROXY"] = PROXY
-    env["HF_HUB_OFFLINE"] = "1"
+    env.pop("HF_HUB_OFFLINE", None)
     env["PYTHONIOENCODING"] = "utf-8"
     return env
 
