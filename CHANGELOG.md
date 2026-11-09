@@ -1,7 +1,35 @@
 # Changelog
 
 All notable changes to this workbench are recorded here, newest first.
-This project has no version tags yet, so entries are dated instead of numbered.
+Entries carry the date; since `0.1.0` they also carry the `VERSION` number.
+
+## 0.1.0 — 2026-11-05 — Portable green build: 两个 ZIP（完整 full / 精简 slim）, no bundled LLM key, no PyTorch in the package
+
+### Added
+
+- **两个 ZIP（完整 full / 精简 slim）** — `webapp\.venv\Scripts\python.exe packaging\make_zips.py`
+  writes `dist\tiktok-workbench-0.1.0-full.zip` (carries the ~1.46 GB transcription model,
+  so transcription works offline) and `dist\tiktok-workbench-0.1.0-slim.zip` (no model; the
+  first transcription downloads it), plus `SHA256SUMS.txt` and `build-report.json`. Unzip,
+  double-click `启动工作台.bat`, done: no Python, no installer, no administrator rights.
+  The user manual (`使用说明.md`) ships inside the ZIP.
+- **包内不自带 LLM key** — the ZIP never contains an API key. AI translation and AI chat
+  need internet **and** a key the user puts into `workbuddy\models.json`. A key inside a
+  redistributable ZIP could not be revoked, so it is not bundled.
+- **包内不含 PyTorch** — the package ships faster-whisper + ctranslate2 only and transcribes
+  on the CPU (int8). The development environments keep their own dependencies
+  (`pipeline\requirements.txt`); the portable set is `pipeline\requirements-portable.txt`.
+  Transcription quality and the ledger format are unchanged.
+- Third-party licences: the ZIPs bundle **GPLv3** ffmpeg and the FFmpeg libraries inside
+  **PyAV**; the repository's own source stays **MIT** — see `THIRD_PARTY_NOTICES.md`.
+
+### Known
+
+- Transcription runs on the CPU. A GPU (`auto` + CUDA) path exists but is unverified on a
+  machine without cuDNN, where `auto` falls back to CPU int8 (`qa/gaps.md`).
+- Reverse-engineering works on **local video files** only: the package ships no
+  `yt-dlp.exe`, so pasting a TikTok link does nothing. Collecting from TikTok still needs
+  the user's own proxy, and AI translation/chat needs the user's own key.
 
 ## 2026-11-05 — Empty data no longer blanks the benchmark page; AI endpoints resolve correctly; the app survives being moved
 

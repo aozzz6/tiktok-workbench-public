@@ -100,6 +100,50 @@ command above needs no extra flags.
 `pip freeze` inside `pipeline\.venv` is still the complete list of what is actually
 installed there.
 
+## Portable package (green build for users who have no Python)
+
+The two ZIPs under `dist\` are the end-user product: unzip, double-click, nothing to
+install, no administrator rights. The user manual ships inside every package
+(`packaging\templates\使用说明.md`, copied to the package root as `使用说明.md`).
+
+One command builds both flavours and zips them, from a developer checkout:
+
+```bat
+rem one-time: let the builder find ffmpeg — either copy ffmpeg.exe + ffprobe.exe into
+rem pipeline\ffmpeg_bin\, or set WB_FFMPEG_DIR, or add --ffmpeg-dir "<folder>" below
+webapp\.venv\Scripts\python.exe packaging\make_zips.py
+```
+
+Output: `dist\tiktok-workbench-<VERSION>-full.zip` (carries the ~1.46 GB transcription
+model, so transcription works offline), `-slim.zip` (no model; the first transcription
+downloads ~1.46 GB), `SHA256SUMS.txt` and `build-report.json`. `--flavor slim` builds
+only the small one; `--skip-build` zips the stages already sitting in
+`build\portable\`.
+
+**The developer checkout flow is unchanged: two venvs plus `install.bat`.**
+The portable build is an extra output — it does not replace `webapp\.venv`,
+`pipeline\.venv` or `webapp\install.bat`, and a developer never needs the ZIPs.
+
+Packaging tests — one script per area, each prints `通过 N / M` and exits 0/1. A few of
+them run against a real package, so build one stage first:
+
+```bat
+webapp\.venv\Scripts\python.exe packaging\build_portable.py --flavor slim --ffmpeg-dir "<ffmpeg folder>"
+for %f in (packaging\tests\*.test.py) do @(webapp\.venv\Scripts\python.exe "%f" || exit /b 1)
+```
+
+> A few of the package cases look for `build\portable\t18` (the T-18 convention). If it is
+> missing, build it once:
+> `webapp\.venv\Scripts\python.exe packaging\build_portable.py --flavor slim --out build\portable\t18 --ffmpeg-dir "<ffmpeg folder>"`.
+
+What the package can and cannot do, stated plainly: transcription runs on the CPU
+(int8) — a GPU path exists but is unverified, see `qa/gaps.md`; reverse-engineering
+works on **local video files** only (the package ships no `yt-dlp.exe`, so pasting a
+TikTok link does nothing); AI translation and AI chat need internet **and your own API
+key** in `workbuddy\models.json`; collecting from TikTok needs **your own proxy**.
+Viewing the ledger, benchmark analysis, reverse-engineering and transcription all work
+offline.
+
 ## Run the dashboard
 
 ```bat
@@ -209,6 +253,11 @@ The runner walks every directory under `qa\`, finds an entry point in the order
 `run.ps1` / `check.ps1` / `run.py` / `run.sh`, and runs it. A directory with no entry
 point is reported as `[WARN] … 不算通过` and the whole run exits non-zero — "no cases
 found" must never look like a pass.
+
+> **Baseline note:** `qa/run-all.ps1` stays red in this repository — `qa/T-04` pins a
+> commit that is not in this history and `test_publish_artifacts.py` is 8/13 (see
+> `qa/gaps.md` #21). A green `run-all` is therefore **not** the baseline here; run the
+> individual `qa\T-*` cases for the change you are working on.
 
 ## What is deliberately not in git
 
@@ -409,11 +458,13 @@ Two things about that file:
 - `DEPLOY_CHECKLIST.md` — **the deploy self-check**: run its one-minute check right after
   installing. It catches most of the traps up front (interpreter, proxy port, ledger location,
   test baselines, the WAF fallback).
-- `DEPLOY_GUIDE.md` — moving the dashboard-only copy to another machine. Note that
-  it still says port 8787 and 15 columns; both are out of date (8789, 14 columns).
+- `DEPLOY_GUIDE.md` — moving a dashboard-only copy to another machine (port 8789,
+  14 columns, ledger in `ledger\`). For an end user, use the ZIP described under
+  **Portable package** above instead.
 - `工作上下文归档_最新.md` — working context: fixed rules, paths, interpreters.
 - `qa/gaps.md` — what the current change's tests could **not** verify, and why.
-- `LICENSE` — MIT. **Before you publish, replace `<YOUR NAME>` in the copyright line
-  with your own name.**
-- `THIRD_PARTY_NOTICES.md` — the third-party assets (font, chart library) and the
-  licenses they stay under; MIT does not cover them.
+- **Licensing.** The repository's own source code is **MIT** (`LICENSE` — replace
+  `<YOUR NAME>` in the copyright line before you publish). A released ZIP is **not**
+  MIT-only: it bundles **ffmpeg** and the FFmpeg libraries inside **PyAV**, both under
+  **GPLv3**, so redistributing a ZIP means shipping the GPLv3 text and the
+  corresponding-source offer — see `THIRD_PARTY_NOTICES.md`.

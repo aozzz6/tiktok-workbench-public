@@ -83,6 +83,43 @@ pipeline\.venv\Scripts\python.exe -m pip install -r pipeline\requirements.txt
 
 `pipeline\.venv` 里到底装了什么，最完整的清单仍然是那边的 `pip freeze`。
 
+## 绿色版（Portable，给没有 Python 的使用者）
+
+`dist\` 下那两个 ZIP 就是给使用者的成品：解压、双击，不用装任何东西，也不需要管理员权限。
+使用者说明书随包带——源文件是 `packaging\templates\使用说明.md`，构建时会复制成包根目录的 `使用说明.md`。
+
+在开发机上一条命令出两个包：
+
+```bat
+rem 只需一次：让构建找得到 ffmpeg —— 把 ffmpeg.exe + ffprobe.exe 放进 pipeline\ffmpeg_bin\，
+rem 或者设 WB_FFMPEG_DIR，或者给下面这条命令加 --ffmpeg-dir "<ffmpeg 所在目录>"
+webapp\.venv\Scripts\python.exe packaging\make_zips.py
+```
+
+产物：`dist\tiktok-workbench-<VERSION>-full.zip`（带约 1.46 GB 模型，转写可离线）、
+`-slim.zip`（不带模型，首次转写会下载约 1.46 GB）、`SHA256SUMS.txt`、`build-report.json`。
+只出小包用 `--flavor slim`；不想重构建、直接拿 `build\portable\` 里现成 stage 打包用 `--skip-build`。
+
+**开发者检出流程不变：仍然是两个 venv + `install.bat`。**
+绿色版只是多出来的一份产物——它不替代 `webapp\.venv`、`pipeline\.venv` 和 `webapp\install.bat`，
+开发者日常用不到 ZIP。
+
+packaging 目录的测试——一个方面一个脚本，各打印 `通过 N / M`、退出码 0/1。其中有几条要在**真包**上跑，
+所以先构建一次 slim：
+
+```bat
+webapp\.venv\Scripts\python.exe packaging\build_portable.py --flavor slim --ffmpeg-dir "<ffmpeg 所在目录>"
+for %f in (packaging\tests\*.test.py) do @(webapp\.venv\Scripts\python.exe "%f" || exit /b 1)
+```
+
+> 包上用例里有几条按 `build\portable\t18` 找包（T-18 那条的约定）：没有就先建一次
+> `webapp\.venv\Scripts\python.exe packaging\build_portable.py --flavor slim --out build\portable\t18 --ffmpeg-dir "<ffmpeg>"`。
+
+包里能做什么、不能做什么，照实写：转写走 CPU（int8），GPU 路线存在但未验证（见 `qa/gaps.md`）；
+反推只吃**本地视频**（包里没有 `yt-dlp.exe`，粘贴 TikTok 链接不会下载）；AI 翻译和 AI 对话要联网，
+并且要你自己填 API key（`workbuddy\models.json`）；采集 TikTok 要你自己的代理。
+看台账、对标分析、反推、转写这四件事可以完全离线。
+
 ## 启动看板
 
 ```bat
@@ -176,6 +213,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File qa\run-all.ps1
 
 总跑脚本会遍历 `qa\` 下每个目录，按 `run.ps1` / `check.ps1` / `run.py` / `run.sh` 的顺序找入口并执行。
 某个目录没有入口文件时会报 `[WARN] … 不算通过`，整轮以非 0 退出 —— 「没有用例」永远不算通过。
+
+> **基线说明：** `qa\run-all.ps1` 在本仓库恒红（`qa\T-04` 钉了不在历史里的提交、`publish_artifacts` 8/13，见 `qa\gaps.md` #21），所以本仓库不拿 run-all 全绿当基线 —— 请按你要改的部分跑对应的 `qa\T-*` 用例。
 
 ## 有意不进 git 的东西
 
@@ -345,10 +384,10 @@ copy pipeline\accounts.example.json pipeline\accounts.json
 - `DEPLOY_QUICKSTART.md` — 新机部署 5 步走（含 `first_run.py` 自检脚本）。
 - `DEPLOY_CHECKLIST.md` —— **部署自检清单**：装完先跑它的一分钟自检，能提前挡掉大部分坑
   （解释器、代理端口、台账位置、测试基线、WAF 兜底都在里面）。
-- `DEPLOY_GUIDE.md` —— 把「只有看板」的副本搬到另一台机器。注意它至今仍写端口 8787 和 15 列，
-  两处都已过期（现在是 8789 和 14 列）。
+- `DEPLOY_GUIDE.md` —— 把「只有看板」的副本搬到另一台机器（端口 8789、14 列台账、台账在 `ledger\`）。
+  终端使用者请直接用上面的**绿色版** ZIP。
 - `工作上下文归档_最新.md` —— 工作上下文：固定规则、路径、解释器。
 - `qa/gaps.md` —— 本次改动的测试**没能**验证什么、为什么。
-- `LICENSE` —— MIT。**发布前请把版权行里的 `<YOUR NAME>` 换成你自己的名字。**
-- `THIRD_PARTY_NOTICES.md` —— 仓库里的第三方资产（字体、图表库）以及它们各自的许可证；
-  MIT 不覆盖它们。
+- **许可（重要）。** **仓库源码**是 **MIT**（`LICENSE` —— 发布前把版权行里的 `<YOUR NAME>` 换成你自己的名字）。
+  **发布出来的 ZIP 不只有 MIT**：包里带着 **GPLv3** 的 **ffmpeg**（以及 **PyAV** 里那套 FFmpeg），
+  分发 ZIP 就要随附 GPLv3 全文和源码获取方式 —— 见 `THIRD_PARTY_NOTICES.md`。
