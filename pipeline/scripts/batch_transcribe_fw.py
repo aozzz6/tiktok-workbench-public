@@ -217,22 +217,31 @@ def main() -> int:
             return 2
 
         # ── 2. 设备/精度：只走 ctranslate2，不 import torch（T-20 DoD 3） ──
-        #    auto：ct2 看得到 CUDA 设备 **且** cuDNN 真能用 → GPU(float16)，否则 CPU int8。
+        #    只在必要时探测：auto（自动挑 GPU）或用户显式 --device cuda。
         #    探测里任何异常都吞掉、退回 CPU：不许因为"探测 GPU"把整批转写搞崩。
         cuda_devices, cudnn_ok, added = 0, False, []
-        try:
-            if a.device == "cuda" or (a.backend == "auto" and a.device == "auto"):
+        probed = a.device == "cuda" or (a.backend == "auto" and a.device == "auto")
+        if probed:
+            try:
                 added = setup_cuda_dll_paths()       # 把 nvidia/*/bin 加进 PATH（没有就空）
-            if a.backend == "auto" and a.device == "auto":
                 cuda_devices = cuda_device_count()
                 cudnn_ok = cuda_devices > 0 and cudnn_available()
-        except Exception:                            # noqa: BLE001  探测失败一律当"没有 GPU"
-            cuda_devices, cudnn_ok = 0, False
+            except Exception:                        # noqa: BLE001  探测失败一律当"没有 GPU"
+                cuda_devices, cudnn_ok = 0, False
+        if a.device == "cuda" and not cudnn_ok:
+            # 显式要 GPU 但 cuDNN 不可用：ct2 会在 C++ 侧 0xC0000409 硬崩（Python 兜不住），
+            # 所以必须在构造模型**之前**拒绝 —— 一句可读中文 + 退出码 2。
+            print("[error] 这台机器的 CUDA 用不了：缺少可加载的 cuDNN"
+                  "（cudnn64_9.dll / cudnn_ops64_9.dll / cudnn_heuristic64_9.dll）。\n"
+                  "[提示] ctranslate2 走 CUDA 时会直接崩溃（0xC0000409），"
+                  "请改用 --device cpu（或去掉 --device 用 auto）。", file=sys.stderr)
+            return 2
         device, ctype = choose_runtime(a.backend, a.device, a.compute_type,
                                        a.gpu_compute_type, cuda_devices, cudnn_ok)
+        probe_note = (f"probe=done cuda_devices={cuda_devices} cudnn={cudnn_ok}"
+                      if probed else "probe=skipped")
         print(f"[info] backend=faster device={device} compute_type={ctype} vad={a.vad} "
-              f"model={a.model} cuda_devices={cuda_devices} cudnn={cudnn_ok} "
-              f"nvidia_dll_dirs={len(added)}", file=sys.stderr)
+              f"model={a.model} {probe_note} nvidia_dll_dirs={len(added)}", file=sys.stderr)
 
         # ── 3. 加载 faster-whisper：失败给一句可读中文 + 退出 2，不留 traceback ──
         try:

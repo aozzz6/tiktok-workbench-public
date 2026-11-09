@@ -213,12 +213,18 @@ def case_auto_equals_faster():
         line_auto, line_fast = backend_line(auto), backend_line(fast)
         assert_(line_auto is not None, f"auto 没打印 backend= 行：{dec(auto.stderr)[-700:]!r}")
         assert_(line_fast is not None, f"faster 没打印 backend= 行：{dec(fast.stderr)[-700:]!r}")
-        # 只比 `backend=faster` 前缀：真 GPU 机器上 auto 可能是 device=cuda，而 faster 固定 CPU；
-        # 本用例把 ctranslate2 打桩了（= 没有 CUDA），所以整行也必须一致。
+        # 只比 `backend=faster` 前缀 + device/compute_type：真 GPU 机器上 auto 可能 device=cuda，
+        # 而 faster 固定 CPU；本用例把 ctranslate2 打桩了（= 没有 CUDA），所以这几样必须一致。
+        # （日志里 probe=… 的差异是 (g) 的事：auto 探测、faster 不探测。）
+        def stable(line):
+            return " ".join(part for part in line.split()
+                            if not part.startswith(("probe=", "cuda_devices=", "cudnn=")))
+
         assert_(line_auto.startswith("backend=faster"), f"auto 的 backend 行不是 faster：{line_auto!r}")
         assert_(line_fast.startswith("backend=faster"), f"faster 的 backend 行不是 faster：{line_fast!r}")
-        assert_(line_auto == line_fast,
-                f"无 CUDA 环境里 auto 与 faster 必须整行一致：{line_auto!r} vs {line_fast!r}")
+        assert_(stable(line_auto) == stable(line_fast),
+                f"无 CUDA 环境里 auto 与 faster 的 backend/device/compute_type 必须一致："
+                f"{stable(line_auto)!r} vs {stable(line_fast)!r}")
         assert_("device=cpu" in line_auto, f"无 CUDA 环境应选 CPU：{line_auto!r}")
         for proc, label in ((auto, "auto"), (fast, "faster")):
             err = dec(proc.stderr).lower()
@@ -247,6 +253,52 @@ def case_choose_runtime():
     for args, want in table:
         got = tuple(module.choose_runtime(*args))
         assert_(got == want, f"choose_runtime{args} = {got}，期望 {want}")
+
+
+# ──────── (f) 显式 --device cuda 也要先预检 cuDNN → 可读中文 + 退 2（不许硬崩） ────────
+def case_device_cuda_without_cudnn():
+    tmp = Path(tempfile.mkdtemp(prefix="wb_t20_f_"))
+    try:
+        ct2 = make_stub(tmp, "ctranslate2", "simulated: ctranslate2 unavailable")
+        env = base_env(PYTHONPATH=str(ct2), XDG_CACHE_HOME=None, HF_HOME=None)
+        p = run_script(["--audio-dir", make_audio(tmp), "--backend", "faster",
+                        "--device", "cuda", "--model-dir", make_model_dir(tmp)], env=env)
+        err = dec(p.stderr)
+        assert_(p.returncode == 2,
+                f"退出码 {p.returncode}（期望 2：cuDNN 不可用时不许去构造 cuda，否则 0xC0000409 硬崩）"
+                f"；stderr={err[-700:]!r}")
+        assert_("cuDNN" in err, f"stderr 没提 cuDNN（应是一句可读中文）：{err[-700:]!r}")
+        no_traceback(p.stderr)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ──────── (g) 未探测的分支打 probe=skipped，别写 cuda_devices=0 cudnn=False ────────
+def case_probe_logging():
+    tmp = Path(tempfile.mkdtemp(prefix="wb_t20_g_"))
+    try:
+        audio = make_audio(tmp)
+        model = make_model_dir(tmp)
+        ct2 = make_stub(tmp, "ctranslate2", "simulated: ctranslate2 unavailable")
+        env = base_env(PYTHONPATH=str(ct2), XDG_CACHE_HOME=None, HF_HOME=None)
+
+        def backend_line(proc):
+            for line in dec(proc.stderr).splitlines():
+                if "backend=" in line:
+                    return line[line.index("backend="):].strip()
+            return None
+
+        fast = run_script(["--audio-dir", audio, "--backend", "faster", "--model-dir", model], env=env)
+        auto = run_script(["--audio-dir", audio, "--backend", "auto", "--model-dir", model], env=env)
+        lf, la = backend_line(fast), backend_line(auto)
+        assert_(lf is not None, f"faster 没打印 backend= 行：{dec(fast.stderr)[-700:]!r}")
+        assert_(la is not None, f"auto 没打印 backend= 行：{dec(auto.stderr)[-700:]!r}")
+        assert_("probe=skipped" in lf, f"faster 不探测 CUDA，应写 probe=skipped：{lf!r}")
+        assert_("cuda_devices=" not in lf, f"没探测就不该写 cuda_devices=…（等于谎报 0）：{lf!r}")
+        assert_("probe=done" in la, f"auto 探测过 CUDA，应写 probe=done：{la!r}")
+        assert_("cuda_devices=" in la, f"探测过就该写 cuda_devices=…：{la!r}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ─────────────────────────────── 静态断言（DoD 2/3/4） ───────────────────────────────
@@ -294,6 +346,8 @@ check("(b) 无模型 + WB_MODEL_DOWNLOAD=0 → 退 2、含「模型」「HF_ENDP
 check("(c) ctranslate2 导入失败 → 退 2、含 ctranslate2 与「这台机器」、无 Traceback", case_ctranslate2_import_failure)
 check("(d) 空音频目录 → 退 0、末行 JSON total==0", case_empty_audio_dir)
 check("(e) --backend auto 与 faster 同走 faster 分支（无 CUDA 时整行一致）、不 import torch/whisper", case_auto_equals_faster)
+check("(f) 显式 --device cuda 缺 cuDNN → 退 2 + 可读中文（不 0xC0000409 硬崩）", case_device_cuda_without_cudnn)
+check("(g) 日志：没探测的分支 probe=skipped，探测过的 probe=done + cuda_devices", case_probe_logging)
 
 print("[2] DoD 2/3/4：静态契约")
 check('(DoD 2) 没有 setdefault("HF_HUB_OFFLINE", "1")', case_no_setdefault_offline)

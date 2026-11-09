@@ -90,15 +90,38 @@ def _require_cfg(key: str, step: str) -> str:
     return path
 
 
+# 子进程**不许**继承的宿主变量：它们能把子进程指到另一套 site-packages / 标准库上。
+# 包里靠 `_setenv.bat` 清掉，但开发检出、从终端/计划任务启动时没人清。
+_DROP_CHILD_ENV = ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP")
+
+
+def _child_env(env: dict | None = None) -> dict:
+    """给子进程的环境：继承父环境 + 覆盖项，但**显式删掉**宿主的 Python 注入变量。
+
+    `PYTHONPATH` / `PYTHONHOME` 若从宿主带进来，可能遮蔽包内的 `huggingface_hub` /
+    `faster_whisper`（甚至让子进程加载到别处的 `site-packages`）；`PYTHONSTARTUP`
+    只影响交互式解释器，一并清掉。
+    **`HF_*` 一律保留**：`HF_ENDPOINT` / `HF_HOME` 是设计上要传给子进程的，
+    离线开关（见 `step5_transcribe` 处的注释）由子进程的 `model_cache` 决定（ADR-0008），
+    父进程只如实转发，不在这里改写。
+    """
+    child = {**os.environ, **(env or {})}
+    for name in _DROP_CHILD_ENV:
+        child.pop(name, None)
+    return child
+
+
 def _subprocess_step(step: str, cmd: list[str], env: dict | None = None) -> tuple[bool, str]:
     """跑外部脚本，解析 stdout 末尾的 JSON 产物行（约定脚本最后一行输出 JSON 摘要）。
-    env: 追加到 os.environ 的覆盖项。**当前没有调用方预设离线开关**——离线与否
-    由子进程的 `model_cache` 按"本机有没有模型"决定（ADR-0008）。"""
+
+    env: 追加到 os.environ 的覆盖项；作为子进程环境时会先经 `_child_env()` 清掉
+    宿主注入的 `PYTHONPATH`/`PYTHONHOME`/`PYTHONSTARTUP`（`HF_*` 保留）。
+    **当前没有调用方预设离线开关**——离线与否由子进程的 `model_cache` 决定（ADR-0008）。
+    """
     import os
     log(step, "开始: " + " ".join(cmd[:3]) + " ...")
-    full_env = {**os.environ, **env} if env else None
     proc = subprocess.run(cmd, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", env=full_env)
+                          encoding="utf-8", errors="replace", env=_child_env(env))
     if proc.returncode != 0:
         return False, f"exit={proc.returncode} stderr={proc.stderr[-300:]}"
     for line in reversed(proc.stdout.strip().splitlines()):

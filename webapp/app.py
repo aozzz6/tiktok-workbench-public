@@ -571,8 +571,17 @@ def _build_pipeline_cmd(p: dict) -> list[str]:
             raise ValueError("开始日期不能晚于结束日期")
     except (ValueError, TypeError) as e:
         raise HTTPException(400, f"账号或日期无效: {e}")
-    if p.get("backend") and p["backend"] not in ("auto", "faster", "openai"):
-        raise HTTPException(400, "不支持的转写后端")
+    # 2026-11-08（T-20 / CRD-0006）：openai 转写后端已退役（脚本遇到它会直接退 2）。
+    # 但老前端下拉（index.html 的「openai（CPU 兜底，慢）」）和旧调用方仍可能带这个值；
+    # 这里按 auto 执行并留一行日志 —— 绝不让整轮日更 /「一键运行」因为一个已退役的
+    # 后端名而整体失败。非法值仍然 400。
+    if p.get("backend"):
+        if p["backend"] == "openai":
+            print("[run] backend=openai 已退役（本包只带 faster-whisper），按 auto 执行",
+                  flush=True)
+            p = {**p, "backend": "auto"}
+        elif p["backend"] not in ("auto", "faster"):
+            raise HTTPException(400, "不支持的转写后端（只支持 auto / faster；openai 已退役）")
     ledger = config.ledger_path()
     xlsx = p.get("xlsx") or (str(ledger) if ledger else "")
     if not xlsx:

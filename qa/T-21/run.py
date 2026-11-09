@@ -3,20 +3,19 @@
 """qa/T-21/run.py — T-21「流水线不再钉离线开关，前置校验对便携环境说真话」的独立验收。
 
 用例清单：`.dsh-crew/jobs/portable-package/M2-qa-plan.md` 的 T-21 段（1..10 条）。
-DoD 来源：docs/tasks/tasks.md 的 T-21（DoD 4 已按 CRD-0006 放宽）。
+DoD 来源：docs/tasks/tasks.md 的 T-21。
 
 跑法（按清单）：
     cd D:\\tiktok-workbench
     pipeline\\.venv\\Scripts\\python.exe qa\\T-21\\run.py
 
-Lead 的顺序要求（2026-11-08）：
+顺序要求：
   * 先跑 `pipeline\\tests\\test_orchestrator.py`，必须退 0。
-  * `pipeline\\tests\\test_acceptance_regressions.py` 现在红 1 条
-    `test_cpu_backend_explicitly_uses_cpu`，是 CRD-0006 的**已知前提**，另一个 QA 正在改。
-    本文件先跑一次记录状态；**如果红的只有这一条**，标
-    `WAIT-CRD-0006（待另一 QA 更新）` 且不算失败；红别的就是真回归，判 FAIL。
-    最后（本文件第 10 条之后）再跑一次：那时如果绿了，就按绿判（第 9 条升级为 PASS）。
-  * 纯打桩，不起服务；除上面那一条 WAIT 外没有 SKIP。
+  * `pipeline\\tests\\test_acceptance_regressions.py` 必须无条件退 0（DoD 4）。
+    历史：CRD-0006 窗口期它曾只红 `test_cpu_backend_explicitly_uses_cpu`；
+    提交 64a32ce 已关闭该窗口，因此本文件**不再有 WAIT 豁免**，红任何一条都判 FAIL。
+    最后（第 10 条之后）再跑一次，以那一次的结果为准（绿了按绿判，红了按红判）。
+  * 纯打桩，不起服务；没有 SKIP。
 """
 from __future__ import annotations
 
@@ -38,7 +37,6 @@ PIPELINE_SRC = PIPELINE_DIR / "pipeline.py"
 TEST_PORTABLE = PIPELINE_DIR / "tests" / "test_pipeline_portable_env.py"
 TEST_ORCH = PIPELINE_DIR / "tests" / "test_orchestrator.py"
 TEST_ACCEPT = PIPELINE_DIR / "tests" / "test_acceptance_regressions.py"
-KNOWN_RED = "test_cpu_backend_explicitly_uses_cpu"
 
 # 本机控制台是 GBK，而这些测试会打印 ✓/✗；统一用 UTF-8 跑子进程。
 for _s in (sys.stdout, sys.stderr):
@@ -54,13 +52,6 @@ class CaseFail(AssertionError):
         self.evidence = evidence or []
 
 
-class CaseWait(Exception):
-    """已知的、被别人任务修掉的暂时红：不算失败，但也不是 PASS。"""
-    def __init__(self, msg: str, evidence: list[str] | None = None):
-        super().__init__(msg)
-        self.evidence = evidence or []
-
-
 RESULTS: list[tuple[str, int, str]] = []
 
 
@@ -69,11 +60,6 @@ def case(num: int, desc: str):
         def wrapper():
             try:
                 ev = fn() or []
-            except CaseWait as e:
-                print("WAIT %d. %s -> %s" % (num, desc, e))
-                for line in e.evidence:
-                    print("    " + line)
-                RESULTS.append(("WAIT", num, desc))
             except CaseFail as e:
                 print("FAIL %d. %s -> %s" % (num, desc, e))
                 for line in e.evidence:
@@ -311,26 +297,25 @@ def run_acceptance() -> tuple[object, str, dict]:
         "rc": rc,
         "ran": int(ran.group(1)) if ran else None,
         "failures": failures,
-        "known_only": (bool(failures) and set(failures) == {KNOWN_RED}),
         "ok": (rc == 0 and "OK" in out),
         "out": out,
     }
     return rc, out, info
 
 
-@case(9, "回归 test_acceptance_regressions.py（CRD-0006 已知红 1 条 → WAIT）")
+# 历史：CRD-0006 窗口期 test_acceptance_regressions.py 曾只红
+# test_cpu_backend_explicitly_uses_cpu；提交 64a32ce 已关闭该窗口，DoD 4 现在
+# 要求它无条件退 0。这里不再有任何 WAIT 豁免，红任何一条都判 FAIL。
+@case(9, "回归 test_acceptance_regressions.py 必须无条件退 0（无 CRD-0006 豁免）")
 def c09():
     rc, out, info = run_acceptance()
     ev = ["%s -> exit=%s，Ran=%s，失败/错误=%r"
           % (TEST_ACCEPT, rc, info["ran"], info["failures"])] + tail(out, 10)
     if info["ran"] is None:
         fail("没有解析到 unittest 的 Ran N tests 汇总", ev)
-    if info["ok"]:
-        return ev
-    if info["known_only"]:
-        raise CaseWait("WAIT-CRD-0006（待另一 QA 更新）：只有 %s，其余 %d 条通过"
-                       % (KNOWN_RED, info["ran"] - 1), ev)
-    fail("test_acceptance_regressions.py 有非 CRD-0006 的失败：%r" % (info["failures"],), ev)
+    if not info["ok"]:
+        fail("test_acceptance_regressions.py 未退 0：失败/错误=%r" % (info["failures"],), ev)
+    return ev
 
 
 @case(10, "QA 入口：pipeline 解释器跑 qa\\T-21\\run.py；最后再跑一次 acceptance")
@@ -344,22 +329,20 @@ def c10():
     if Path(__file__).resolve() != (QA_DIR / "run.py").resolve():
         fail("入口不是 qa\\T-21\\run.py", ev)
 
-    # Lead 要求：最后再跑一次；如果已经绿了，第 9 条按绿判。
+    # 最后一次重跑：以这次为准；绿了按绿判，红了按红判（没有 WAIT）。
     rc, out, info = run_acceptance()
     ev += ["最终重跑：exit=%s，Ran=%s，失败/错误=%r"
            % (rc, info["ran"], info["failures"])] + tail(out, 6)
     if info["ran"] is None:
         fail("最终重跑没有解析到 Ran N tests", ev)
-    final_status = "PASS" if info["ok"] else ("WAIT" if info["known_only"] else "FAIL")
+    final_status = "PASS" if info["ok"] else "FAIL"
     for i, (status, num, desc) in enumerate(RESULTS):
         if num == 9:
             RESULTS[i] = (final_status, num, desc)
     if final_status == "PASS":
-        ev.append("第 9 条最终重跑已绿：按绿判 PASS（不再是 WAIT）")
-    elif final_status == "WAIT":
-        ev.append("第 9 条最终重跑仍只红 %s：保持 WAIT-CRD-0006（待另一 QA 更新）" % KNOWN_RED)
+        ev.append("第 9 条最终重跑绿：按绿判 PASS")
     else:
-        ev.append("第 9 条最终重跑出现非 CRD-0006 的失败：按 FAIL 判 %r" % (info["failures"],))
+        ev.append("第 9 条最终重跑红：按红判 FAIL %r" % (info["failures"],))
     return ev
 
 
@@ -374,21 +357,14 @@ def main() -> int:
 
     total = len(RESULTS)
     passed = sum(1 for s, _n, _d in RESULTS if s == "PASS")
-    wait = [r for r in RESULTS if r[0] == "WAIT"]
     failed = [r for r in RESULTS if r[0] == "FAIL"]
     print("")
-    if wait:
-        print("WAIT-CRD-0006（待另一 QA 更新）：%s"
-              % ", ".join("%d.%s" % (n, d) for _s, n, d in wait))
-    print("通过 %d / %d（FAIL %d，WAIT %d）%s"
-          % (passed, total, len(failed), len(wait),
+    print("通过 %d / %d（FAIL %d）%s"
+          % (passed, total, len(failed),
              "；失败：%s" % ", ".join("%d.%s" % (n, d) for _s, n, d in failed) if failed else ""))
     if failed:
         print("T-21 有 FAIL，退出码 1")
         return 1
-    if wait:
-        print("T-21 无 FAIL；1 条 WAIT-CRD-0006 不计失败（待另一 QA 更新后复跑应变绿），退出码 0")
-        return 0
     print("T-21 全部通过，退出码 0")
     return 0
 

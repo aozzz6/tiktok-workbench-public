@@ -43,6 +43,7 @@
 | 34 | **真实写入失败（磁盘满 / ACL 拒绝）没验** | Windows 上造这两种场景要改 ACL 或塞满磁盘，风险高 | T-17 只验了“`create_ledger` 返回失败 → 恰好 1 条 `[FAIL]` + 退出 1”这条契约分支；坏台账（0 字节/截断）已验且只 WARN |
 | 35 | （已知行为）包内 `ctranslate2` 首次 import 会打印 `pkg_resources is deprecated` 警告 | `setuptools<81` 已钉住，警告来源是 `ctranslate2` 自身 | 不影响功能；升级 setuptools 时再看 |
 | 36 | **用户目录判据的覆盖面缩小了**：从“整个 `%USERPROFILE%`/`%APPDATA%` 不新增文件”缩到三个定点（`.workbuddy`、`.cache\huggingface`、`%APPDATA%\tiktok-workbench`）+ 顶层条目集合 | 原判据在本机不可判（后台程序静置 20 秒新增约 160 个文件，观测自 QA 会话、未留测量脚本）；`%LOCALAPPDATA%` 与 `%TEMP%` 不在覆盖内 | M1 评审向用户说明；想加强就再加一条“三个目录的第一层条目集合不新增”（零成本，可判） |
+| 37 | **`webapp\tests\pipeline_backend.test.py` 是 9 通过 / 1 失败**：失败那条断言的是旧的 `auto → openai` 回落源码 | 本作业（ADR-0002）把 openai 后端退役了，这条红只会更难修；它不在 M2 任何任务的 owns 里 | 下一个作业单独修：这条用例要改成断言「auto 走 faster-whisper、不 import torch」，与 T-20 的 `test_transcribe_backend.py` 同口径 |
 
 作业收尾时复核本表：已闭环的行删除，本文件只留仍然成立的缺口。
 

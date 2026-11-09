@@ -148,5 +148,67 @@ def case_step0_portable():
 check("3 step0_check：便携环境（无 venv）说「解释器」；缺 ffmpeg 时判失败并点名",
       case_step0_portable)
 
+
+# ── 4. 子进程环境：掐掉宿主的 Python 注入，保留 HF_* ─────────────────
+def case_child_env_strips_python_injection():
+    """安全评审：转写子进程不许带宿主的 `PYTHONPATH`/`PYTHONHOME`/`PYTHONSTARTUP`。
+
+    包里靠 `_setenv.bat` 清这些；开发检出、从终端或计划任务启动时没人清，
+    宿主的 `PYTHONPATH` 会进子进程，可能遮蔽包内的 `huggingface_hub`/`faster_whisper`。
+    反过来 `HF_*`（`HF_ENDPOINT`/`HF_HOME`/`HF_HUB_OFFLINE`）是设计要传给子进程的，必须留。
+    """
+    import os
+    import subprocess as _sp
+
+    capture: dict = {}
+
+    class _Proc:
+        returncode = 0
+        stdout = '{"total": 0, "done": [], "suspect_hallucination": []}'
+        stderr = ""
+
+    def fake_run(_cmd, **_kw):
+        capture.update(kw=_kw)
+        return _Proc()
+
+    keys = ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
+            "HF_ENDPOINT", "HF_HOME", "HF_HUB_OFFLINE")
+    saved = {k: os.environ.get(k) for k in keys}
+    real_run, real_log = _sp.run, pl.log
+    try:
+        os.environ["PYTHONPATH"] = r"C:\evil"
+        os.environ["PYTHONHOME"] = r"C:\evil2"
+        os.environ["PYTHONSTARTUP"] = r"C:\evil3.py"
+        os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+        os.environ["HF_HOME"] = r"C:\hf-home"
+        os.environ["HF_HUB_OFFLINE"] = "0"      # 用户显式设的：要如实转发，不删不改写
+        _sp.run = fake_run
+        pl.log = lambda *_a, **_k: None          # 别往仓库的 pipeline_run.log 里写
+        ok, _detail = pl._subprocess_step("s5", ["x"])
+    finally:
+        _sp.run, pl.log = real_run, real_log
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    assert_(ok is True, "打桩后应判成功")
+    env = capture.get("kw", {}).get("env")
+    assert_(env is not None, "子进程必须拿到一份显式环境（不能再把 env=None 传下去，那样会全量继承宿主）")
+    for bad in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP"):
+        assert_(bad not in env, f"子进程环境里还带着宿主的 {bad}={env.get(bad)!r}")
+    assert_(env.get("HF_ENDPOINT") == "https://hf-mirror.com",
+            f"HF_ENDPOINT 是设计要传的，不该被删：{env.get('HF_ENDPOINT')!r}")
+    assert_(env.get("HF_HOME") == r"C:\hf-home",
+            f"HF_HOME 是设计要传的，不该被删：{env.get('HF_HOME')!r}")
+    assert_(env.get("HF_HUB_OFFLINE") == "0",
+            f"父环境里的离线开关要如实转发（不删、也不改写成 1）：{env.get('HF_HUB_OFFLINE')!r}")
+    assert_("PATH" in env, "父环境的普通变量仍要继承（PATH 是子进程找可执行文件用的）")
+
+
+check("4 子进程环境：删掉 PYTHONPATH/PYTHONHOME/PYTHONSTARTUP，保留 HF_ENDPOINT",
+      case_child_env_strips_python_injection)
+
 print(f"\n通过 {_ok} / {_ok + _fail}")
 sys.exit(1 if _fail else 0)

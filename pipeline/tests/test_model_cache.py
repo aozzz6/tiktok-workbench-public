@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import hashlib
 import inspect
 import os
 import re
@@ -35,6 +36,8 @@ ENV_KEYS = (
 )
 REAL_XDG = r"D:\devcache\xdg-cache"
 REAL_HUB = Path(REAL_XDG) / "huggingface" / "hub"
+# 下载完整性校验涉及四个文件（与 model_cache.SNAPSHOT_FILES 同一组）。
+HASHED_FILES = ("model.bin", "config.json", "tokenizer.json", "vocabulary.txt")
 
 _ok = 0
 _fail = 0
@@ -86,7 +89,7 @@ def clean_env(**updates):
                 os.environ[key] = value
 
 
-def make_snapshot(root, size=None, config=True, tokenizer=True):
+def make_snapshot(root, size=None, config=True, tokenizer=True, vocabulary=True):
     """造一个假快照：model.bin 用 truncate（按需硬链接，避免每次真写 1 GB）。"""
     root = Path(root)
     snap = root / "models--Systran--faster-whisper-medium" / "snapshots" / ("0" * 40)
@@ -107,7 +110,33 @@ def make_snapshot(root, size=None, config=True, tokenizer=True):
         (snap / "config.json").write_text("{}", encoding="utf-8")
     if tokenizer:
         (snap / "tokenizer.json").write_text("{}", encoding="utf-8")
+    if vocabulary:
+        (snap / "vocabulary.txt").write_text("fake-vocab\n", encoding="utf-8")
     return snap
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def set_hashes(snap):
+    """把模块的期望哈希换成这份假快照的真实哈希（返回原值，调用方负责恢复）。"""
+    saved = getattr(mc, "SNAPSHOT_SHA256", None)
+    mc.SNAPSHOT_SHA256 = {name: sha256_file(Path(snap) / name)
+                          for name in HASHED_FILES if (Path(snap) / name).is_file()}
+    return saved
+
+
+def restore_hashes(saved):
+    if saved is None:
+        if hasattr(mc, "SNAPSHOT_SHA256"):
+            del mc.SNAPSHOT_SHA256
+    else:
+        mc.SNAPSHOT_SHA256 = saved
 
 
 def collect():
@@ -160,15 +189,18 @@ print("[2] find_local：model.bin ≥1 GB + config.json + tokenizer.json")
 
 def _find_hit():
     tmp = Path(tempfile.mkdtemp(prefix="t19_hit_"))
+    saved = None
     try:
         with clean_env(HF_HUB_CACHE=str(tmp)):
             snap = make_snapshot(tmp, size=mc.MIN_MODEL_BYTES)
+            saved = set_hashes(snap)                 # 假快照：让它满足哈希校验
             assert_(mc.find_local("medium") == snap, "合法快照应命中")
     finally:
+        restore_hashes(saved)
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-check("命中：model.bin == 1 GB 且 config.json / tokenizer.json 都在", _find_hit)
+check("命中：model.bin == 1 GB 且三套件齐全 + 哈希对得上", _find_hit)
 
 
 def _find_small():
@@ -304,9 +336,11 @@ print("[5] 命中 → 赋值 HF_HUB_OFFLINE=1，打印模型目录")
 
 def _hit_sets_offline():
     tmp = Path(tempfile.mkdtemp(prefix="t19_off_"))
+    saved = None
     try:
         with clean_env(HF_HUB_CACHE=str(tmp)):
             snap = make_snapshot(tmp, size=mc.MIN_MODEL_BYTES)
+            saved = set_hashes(snap)
             os.environ["HF_HUB_OFFLINE"] = "0"
             lines, reporter = collect()
             got = mc.ensure_model("medium", reporter=reporter)
@@ -315,6 +349,7 @@ def _hit_sets_offline():
             assert_(any("模型目录" in s and str(snap) in s for s in lines),
                     "应打印模型目录：%r" % (lines,))
     finally:
+        restore_hashes(saved)
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -353,12 +388,16 @@ def _download_ok():
     tmp = Path(tempfile.mkdtemp(prefix="t19_dl_"))
     orig = mc._snapshot_download
     calls = {}
+    saved = None
 
-    def fake_download(repo_id, allow_patterns=None):
+    def fake_download(repo_id, allow_patterns=None, revision=None):
         calls["repo"] = repo_id
         calls["patterns"] = tuple(allow_patterns or ())
+        calls["revision"] = revision
         calls["offline"] = os.environ.get("HF_HUB_OFFLINE")
-        make_snapshot(tmp, size=mc.MIN_MODEL_BYTES)
+        snap = make_snapshot(tmp, size=mc.MIN_MODEL_BYTES)
+        nonlocal saved
+        saved = set_hashes(snap)                     # 下载结果满足哈希校验
         return str(tmp)
 
     try:
@@ -373,18 +412,22 @@ def _download_ok():
             assert_(calls["repo"] == "Systran/faster-whisper-medium", "repo=%r" % (calls["repo"],))
             assert_(calls["patterns"] == tuple(mc.ALLOW_PATTERNS), "下载清单必须与 ALLOW_PATTERNS 一致")
             assert_(calls["offline"] == "0", "下载调用时 HF_HUB_OFFLINE 必须是 0（赋值、不是 setdefault）")
+            assert_(calls["revision"] == mc.MEDIUM_REVISION,
+                    "下载必须钉 revision=%r，实得 %r" % (mc.MEDIUM_REVISION, calls["revision"]))
     finally:
         mc._snapshot_download = orig
+        restore_hashes(saved)
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-check("下载成功：首行 正在下载 + 约 1.5 GB，返回目录，调用前 offline=0", _download_ok)
+check("下载成功：revision 已钉、首行含 正在下载 + 约 1.5 GB、返回目录、offline=0", _download_ok)
 
 
 def _download_sets_offline_before_import():
     tmp = Path(tempfile.mkdtemp(prefix="t19_order_"))
     orig_import = mc._import_hub
     seen = {}
+    saved = {}
 
     def fake_import():
         seen["at_import"] = os.environ.get("HF_HUB_OFFLINE")
@@ -394,7 +437,8 @@ def _download_sets_offline_before_import():
 
     def snapshot_download(**kwargs):
         seen["at_call"] = os.environ.get("HF_HUB_OFFLINE")
-        make_snapshot(tmp, size=mc.MIN_MODEL_BYTES)
+        snap = make_snapshot(tmp, size=mc.MIN_MODEL_BYTES)
+        saved["hashes"] = set_hashes(snap)
         return str(tmp)
 
     stub.snapshot_download = snapshot_download
@@ -408,6 +452,7 @@ def _download_sets_offline_before_import():
             assert_(seen.get("at_call") == "0", "snapshot_download 调用时 offline 应为 0")
     finally:
         mc._import_hub = orig_import
+        restore_hashes(saved.get("hashes"))
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -419,6 +464,7 @@ def _download_sys_modules_stub():
     """DoD 2 的字面写法：把 huggingface_hub 预置成桩放进 sys.modules，不打桩
     `_import_hub`，断言桩里看到的 offline 已经是 0。"""
     tmp = Path(tempfile.mkdtemp(prefix="t19_stub_"))
+    saved = {}
     try:
         with clean_env(HF_HUB_CACHE=str(tmp)):
             stub = types.ModuleType("huggingface_hub")
@@ -426,7 +472,9 @@ def _download_sys_modules_stub():
 
             def snapshot_download(**kwargs):
                 seen["offline"] = os.environ.get("HF_HUB_OFFLINE")
-                make_snapshot(tmp, size=mc.MIN_MODEL_BYTES)
+                seen["revision"] = kwargs.get("revision")
+                snap = make_snapshot(tmp, size=mc.MIN_MODEL_BYTES)
+                saved["hashes"] = set_hashes(snap)
                 return str(tmp)
 
             stub.snapshot_download = snapshot_download
@@ -436,8 +484,12 @@ def _download_sys_modules_stub():
             got = mc.ensure_model("medium", allow_download=True, reporter=reporter)
             assert_(seen.get("offline") == "0",
                     "sys.modules 桩里看到的 HF_HUB_OFFLINE 应为 0，实得 %r" % (seen.get("offline"),))
+            assert_(seen.get("revision") == mc.MEDIUM_REVISION,
+                    "sys.modules 桩也应收到 revision=%r，实得 %r"
+                    % (mc.MEDIUM_REVISION, seen.get("revision")))
             assert_(Path(got).is_dir(), "应返回快照目录")
     finally:
+        restore_hashes(saved.get("hashes"))
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -489,6 +541,75 @@ def _download_raises():
 
 
 check("下载抛异常 → ModelDownloadFailed 含 HF_ENDPOINT/hf-mirror/原异常类名", _download_raises)
+
+
+# ── 7b. 下载完整性：钉 revision + 四件套 sha256 校验 ───────────────
+print("[7b] 下载完整性：revision 钉住 + sha256 校验")
+
+
+def _revision_pinned():
+    assert_(mc.MEDIUM_REVISION == "08e178d48790749d25932bbc082711ddcfdfbc4f",
+            "MEDIUM_REVISION 必须是本机真实快照的 commit：%r" % (getattr(mc, "MEDIUM_REVISION", None),))
+    assert_(getattr(mc, "HF_REVISION", {}).get("medium") == mc.MEDIUM_REVISION,
+            "HF_REVISION['medium'] 必须指向同一个 revision")
+    assert_(set(mc.SNAPSHOT_FILES) == set(HASHED_FILES),
+            "SNAPSHOT_FILES 必须是四件套：%r" % (getattr(mc, "SNAPSHOT_FILES", None),))
+    for name in HASHED_FILES:
+        value = (getattr(mc, "SNAPSHOT_SHA256", {}) or {}).get(name)
+        assert_(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value),
+                "SNAPSHOT_SHA256[%r] 应是 64 位十六进制：%r" % (name, value))
+
+
+check("MEDIUM_REVISION/HF_REVISION/SNAPSHOT_SHA256 常量齐全且格式正确", _revision_pinned)
+
+
+def _download_hash_mismatch():
+    tmp = Path(tempfile.mkdtemp(prefix="t19_hash_"))
+    orig = mc._snapshot_download
+
+    def fake_download(repo_id, allow_patterns=None, revision=None):
+        make_snapshot(tmp, size=mc.MIN_MODEL_BYTES)   # 结构合法，但内容与真常量不符
+        return str(tmp)
+
+    try:
+        with clean_env(HF_HUB_CACHE=str(tmp), WB_MODEL_DOWNLOAD="1"):
+            mc._snapshot_download = fake_download
+            try:
+                mc.ensure_model("medium", reporter=lambda s: None)
+            except mc.ModelDownloadFailed as exc:
+                msg = str(exc)
+                assert_("校验失败" in msg, "哈希不符必须说 校验失败：%r" % msg)
+                assert_("model.bin" in msg, "消息里要点名不符的文件：%r" % msg)
+            else:
+                raise AssertionError("下载后哈希不符应抛 ModelDownloadFailed")
+    finally:
+        mc._snapshot_download = orig
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+check("下载后哈希不符 → ModelDownloadFailed 含「校验失败」与文件名", _download_hash_mismatch)
+
+
+def _local_hash_mismatch():
+    tmp = Path(tempfile.mkdtemp(prefix="t19_localhash_"))
+    try:
+        with clean_env(HF_HUB_CACHE=str(tmp)):
+            make_snapshot(tmp, size=mc.MIN_MODEL_BYTES)   # 没 set_hashes → 与真常量不符
+            assert_(mc.find_local("medium") is None, "哈希不符的本地快照不能算命中")
+            try:
+                mc.ensure_model("medium", allow_download=False)
+            except mc.ModelMissing as exc:
+                msg = str(exc)
+                for token in ("校验失败", "模型", "未随包", "WB_MODEL_DOWNLOAD"):
+                    assert_(token in msg, "本地哈希不符的 ModelMissing 缺 %r：%r" % (token, msg))
+            else:
+                raise AssertionError("本地快照哈希不符且禁止下载 → ModelMissing")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+check("本地快照哈希不符 → find_local 不命中；禁止下载时 ModelMissing（含校验失败）",
+      _local_hash_mismatch)
 
 
 def _allow_patterns_match():

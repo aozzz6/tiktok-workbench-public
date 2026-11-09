@@ -181,7 +181,7 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(next(c for c in calls if c[0]=='transcribe')[2]['language'],'ja')
 
     def test_cpu_backend_explicitly_uses_cpu(self):
-        """CRD-0006（2026-11-06，QA 改写）：`--backend openai` 后端**已退役**（ADR-0002：包里不带
+        """CRD-0006（2026-11-08，QA 改写）：`--backend openai` 后端**已退役**（ADR-0002：包里不带
         openai-whisper/PyTorch），旧断言「退 0 且调用 `whisper.load_model`」被本作业有意作废。
         新判据 = T-20 DoD 1(a)：退出码 2、stderr 有一句可读提示（含「只带 faster-whisper」）、
         没有 Traceback / ModuleNotFoundError。不加载模型、不联网。
