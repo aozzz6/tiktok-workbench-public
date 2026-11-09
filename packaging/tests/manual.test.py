@@ -98,9 +98,13 @@ def case_version():
 
 # ─────────────────────────── 3. 三个已知限制 ───────────────────────────
 def case_limit_no_ytdlp():
+    """① 粘贴链接不下载的真因是「只认 WB_YTDLP」，**不是**「包里没有 yt-dlp」。"""
     assert_("yt-dlp" in TEXT, "限制①没写 yt-dlp")
+    assert_("WB_YTDLP" in TEXT, "限制①没写真实原因：工作台只认 WB_YTDLP 这个环境变量")
     assert_("链接" in TEXT, "限制①没写「粘贴链接」这件事")
-    assert_("本地视频" in TEXT, "限制①没写明只能用本地视频")
+    assert_("本地视频" in TEXT, "限制①没写明请先把视频下到本地")
+    assert_("没有随包" not in TEXT or "yt-dlp" not in TEXT.split("没有随包")[0][-200:],
+            "限制①还在说「yt-dlp 没有随包」——包里其实带了 yt-dlp（requirements-portable.txt）")
 
 
 def case_limit_ai_online():
@@ -112,6 +116,12 @@ def case_limit_ai_online():
 def case_limit_proxy():
     assert_("代理" in TEXT, "限制③没写代理")
     assert_("离线" in TEXT, "限制③没写哪些功能可以离线")
+    # 2026-11-09（QA 抓错）：反推要调远程视觉模型，**不能**算进离线清单
+    assert_("可以完全离线" not in TEXT, "限制③还在说「可以完全离线」——反推/翻译/对话都要联网")
+    assert_("离线可用" in TEXT, "限制③应分两栏写：离线可用 / 需要联网")
+    assert_("需要联网" in TEXT, "限制③没写哪些功能必须联网")
+    online_part = TEXT.split("需要联网", 1)[1][:80] if "需要联网" in TEXT else ""
+    assert_("反推" in online_part, f"「需要联网」那一栏里没有反推：{online_part!r}")
 
 
 # ─────────────────────────── 4. 常见故障 ≥5 条 ───────────────────────────

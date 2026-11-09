@@ -136,13 +136,21 @@ for %f in (packaging\tests\*.test.py) do @(webapp\.venv\Scripts\python.exe "%f" 
 > missing, build it once:
 > `webapp\.venv\Scripts\python.exe packaging\build_portable.py --flavor slim --out build\portable\t18 --ffmpeg-dir "<ffmpeg folder>"`.
 
-What the package can and cannot do, stated plainly: transcription runs on the CPU
-(int8) — a GPU path exists but is unverified, see `qa/gaps.md`; reverse-engineering
-works on **local video files** only (the package ships no `yt-dlp.exe`, so pasting a
-TikTok link does nothing); AI translation and AI chat need internet **and your own API
-key** in `workbuddy\models.json`; collecting from TikTok needs **your own proxy**.
-Viewing the ledger, benchmark analysis, reverse-engineering and transcription all work
-offline.
+What the package can and cannot do, stated plainly:
+
+- **Works offline:** viewing the ledger, benchmark analysis, and transcription (the full
+  ZIP carries the model; it runs on the CPU with int8 — a GPU path exists but is
+  unverified, see `qa/gaps.md`).
+- **Needs internet and your own API key** (in `workbuddy\models.json`): AI translation,
+  AI chat, and **reverse-engineering** — reverse-engineering runs a **remote vision
+  model**, so it is *not* offline.
+- **Pasting a TikTok link does not download anything** — and *not* because yt-dlp is
+  missing: the package ships it (`python\Lib\site-packages\bin\yt-dlp.exe`, from
+  `yt-dlp==2026.8.19` in `pipeline\requirements-portable.txt`). The workbench only reads
+  the `WB_YTDLP` environment variable, whose default is a developer-machine path, so the
+  download path is not wired to the packaged copy today. Download the video yourself and
+  import the **local file**.
+- **Collecting from TikTok needs your own proxy.**
 
 ## Run the dashboard
 

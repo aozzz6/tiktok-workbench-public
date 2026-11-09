@@ -115,10 +115,17 @@ for %f in (packaging\tests\*.test.py) do @(webapp\.venv\Scripts\python.exe "%f" 
 > 包上用例里有几条按 `build\portable\t18` 找包（T-18 那条的约定）：没有就先建一次
 > `webapp\.venv\Scripts\python.exe packaging\build_portable.py --flavor slim --out build\portable\t18 --ffmpeg-dir "<ffmpeg>"`。
 
-包里能做什么、不能做什么，照实写：转写走 CPU（int8），GPU 路线存在但未验证（见 `qa/gaps.md`）；
-反推只吃**本地视频**（包里没有 `yt-dlp.exe`，粘贴 TikTok 链接不会下载）；AI 翻译和 AI 对话要联网，
-并且要你自己填 API key（`workbuddy\models.json`）；采集 TikTok 要你自己的代理。
-看台账、对标分析、反推、转写这四件事可以完全离线。
+包里能做什么、不能做什么，照实写：
+
+- **离线可用**：看台账、对标分析、转写（完整包连模型都随包带着；转写走 CPU int8，
+  GPU 路线存在但未验证，见 `qa/gaps.md`）。
+- **需要联网 + 你自己的 API key**（填在 `workbuddy\models.json`）：AI 翻译、AI 对话、**反推**。
+  反推要调用远程的「视觉模型」看画面，所以**它不能离线**。
+- **粘贴 TikTok 链接不会下载**——**不是**因为包里没有 yt-dlp：包里其实带了
+  （`python\Lib\site-packages\bin\yt-dlp.exe`，来自 `pipeline\requirements-portable.txt` 的
+  `yt-dlp==2026.8.19`）。工作台只读 `WB_YTDLP` 这个环境变量，而它的默认值是开发机路径，
+  所以现在这条下载路没有接上包里那份。请自己把视频下到本地，再导入**本地视频**。
+- **采集 TikTok 要你自己的代理。**
 
 ## 启动看板
 

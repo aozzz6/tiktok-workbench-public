@@ -165,12 +165,40 @@ def case_deploy_guide_points_to_readme():
     assert_("ledger" in DG, "DEPLOY_GUIDE.md 没有把台账指到包内 ledger\\")
 
 
+def case_package_facts_en():
+    """2026-11-09（QA 抓错）：包里**带着** yt-dlp，真因是只认 WB_YTDLP；离线/联网要分栏写。"""
+    body = _section(EN, r"(?i)^##+ .*portable")
+    assert_("WB_YTDLP" in body, "README.md 没写真实原因：工作台只认 WB_YTDLP")
+    assert_("yt-dlp" in body, "README.md 没提 yt-dlp")
+    assert_("no yt-dlp.exe" not in body and "ships no yt-dlp" not in body,
+            "README.md 还在说「包里没有 yt-dlp.exe」——包里其实带了")
+    assert_("offline" in body.lower(), "README.md 没写哪些功能离线可用")
+    assert_("internet" in body.lower(), "README.md 没写哪些功能必须联网")
+    offline_zone = body.lower().split("needs internet", 1)[1][:160] if "needs internet" in body.lower() else ""
+    assert_("reverse" in offline_zone, f"「needs internet」那段里没有反推/reverse：{offline_zone!r}")
+
+
+def case_package_facts_zh():
+    body = _section(ZH, r"^##+ .*(绿色版|[Pp]ortable)")
+    assert_("WB_YTDLP" in body, "README-zh.md 没写真实原因：工作台只认 WB_YTDLP")
+    assert_("yt-dlp" in body, "README-zh.md 没提 yt-dlp")
+    assert_("没有随包" not in body, "README-zh.md 还在说「yt-dlp 没有随包」——包里其实带了")
+    assert_("离线可用" in body, "README-zh.md 没写「离线可用」那一栏")
+    assert_("需要联网" in body, "README-zh.md 没写「需要联网」那一栏")
+    online = body.split("需要联网", 1)[1][:120] if "需要联网" in body else ""
+    assert_("反推" in online, f"「需要联网」那一栏里没有反推：{online!r}")
+
+
 print("[1] 两份 README 的绿色版一节")
 check("README.md：portable 一节 + 同一条构建命令 + install.bat/两个 venv + packaging 测试跑法",
       case_readme_en_has_portable)
 check("README-zh.md：绿色版一节 + 同一条构建命令 + install.bat/两个 venv + packaging 测试跑法",
       case_readme_zh_has_portable)
 check("两份 README 用的是同一条构建命令", case_same_command_both_readmes)
+
+print("[1b] 2026-11-09 QA 抓到的两处错误说法")
+check("README.md：带了 yt-dlp 但只认 WB_YTDLP；离线/联网分栏且反推在联网栏", case_package_facts_en)
+check("README-zh.md：同上", case_package_facts_zh)
 
 print("[2] CHANGELOG 新一节")
 check(f"CHANGELOG：标题含 {VERSION} 与 2026-11-05，正文含两个 ZIP / 无 LLM key / 无 PyTorch",
