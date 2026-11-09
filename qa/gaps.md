@@ -44,6 +44,12 @@
 | 35 | （已知行为）包内 `ctranslate2` 首次 import 会打印 `pkg_resources is deprecated` 警告 | `setuptools<81` 已钉住，警告来源是 `ctranslate2` 自身 | 不影响功能；升级 setuptools 时再看 |
 | 36 | **用户目录判据的覆盖面缩小了**：从“整个 `%USERPROFILE%`/`%APPDATA%` 不新增文件”缩到三个定点（`.workbuddy`、`.cache\huggingface`、`%APPDATA%\tiktok-workbench`）+ 顶层条目集合 | 原判据在本机不可判（后台程序静置 20 秒新增约 160 个文件，观测自 QA 会话、未留测量脚本）；`%LOCALAPPDATA%` 与 `%TEMP%` 不在覆盖内 | M1 评审向用户说明；想加强就再加一条“三个目录的第一层条目集合不新增”（零成本，可判） |
 | 37 | **`webapp\tests\pipeline_backend.test.py` 是 9 通过 / 1 失败**：失败那条断言的是旧的 `auto → openai` 回落源码 | 本作业（ADR-0002）把 openai 后端退役了，这条红只会更难修；它不在 M2 任何任务的 owns 里 | 下一个作业单独修：这条用例要改成断言「auto 走 faster-whisper、不 import torch」，与 T-20 的 `test_transcribe_backend.py` 同口径 |
+| 38 | **M2 / GPU 路径未验证**：开发机是 RTX 5060（sm_120），但 `pipeline\.venv` 里 torch 是 2.7.0+cpu、没有 `nvidia-*` 轮子、全盘缺 `cudnn_ops64_9.dll`；强制 `device="cuda"` 会 `0xC0000409` 硬崩（已实测） | `--backend auto` 因此在本机走 CPU int8（`cuda_devices=1 cudnn=False`）；`cudnn_available()` 守卫保证"有卡无 cuDNN"的机器不崩；`ctranslate2 4.6.0` 也未必有 sm_120 内核 | 包里应永远是 CPU int8；真要用 GPU 得另议 ct2/cuDNN 安装（属新依赖，要 CRD） |
+| 39 | **模型下载的镜像信任**：`HF_ENDPOINT` 指向的镜像若被控制，用户拿到的模型虽经 sha256 校验（现在会校验 4 个文件），但**第一次下载时**校验值就是"信这个镜像给的元数据"之外的硬编码常量——能挡住"内容被换"，挡不住"用户被引导去下载一个我们没发布过的模型版本" | 已钉 `revision=08e178d4…` 并校验 sha256；提示语写明"镜像由你决定，包不替你信任任何镜像" | 若以后要发内置模型（full 包），把模型哈希写进 `build-info.json`（M3 可做） |
+| 40 | **`--model-dir` 是"可信输入"**：用户/脚本指到任意目录都会原样交给 ctranslate2，不做哈希校验 | 包内与下载路径都有校验；`--model-dir` 是逃生口，按"用户自己负责"处理 | 若要收紧，给 `--model-dir` 也跑 `verify_snapshot`（会拒绝用户自训模型，需先问用户） |
+| 41 | **`ctypes.WinDLL("cudnn64_9.dll")` 走 Windows 默认搜索顺序**（含当前目录 `<pkg>\webapp`） | 能写包内 `webapp\` 的人本来就能改 `app.py`，同信任级；包里无 CUDA 不触发 | 真要做：改成按绝对路径从 `nvidia\*\bin` 加载 + `os.add_dll_directory` |
+| 42 | **T-28 的两份用例可能互踩**：`qa\T-28` 改包内 `ffmpeg.exe` 时没拿产品用例的锁，且产品的 `packaging\tests\reverse_ffmpeg_package.test.py` 对服务端返回的 `vid` 没做格式校验就拼路径 | 两份都在自己的进程里跑、正常顺序不会并发；`vid` 来自可信服务端 | 下次改 T-28 时：`qa\T-28` 复用产品的锁、产品用例对 `vid` 加 `^[0-9]+$` 校验 |
+| 43 | **`model_cache` 命中时每次读 1.4 GB 算 sha256**（热缓存约 1 秒，冷盘 5~8 秒） | 安全评审要求"命中也要校验"；这是它的代价 | 若嫌慢，可加"校验结果按 (路径,大小,mtime) 缓存"，但那会引入新信任面，需另开 ADR |
 
 作业收尾时复核本表：已闭环的行删除，本文件只留仍然成立的缺口。
 

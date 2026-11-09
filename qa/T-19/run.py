@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-r"""qa/T-19/run.py —— T-19「model_cache」独立验收用例（16 条实现用例 + 1 条入口）。
+r"""qa/T-19/run.py —— T-19「model_cache」独立验收用例（18 条实现用例 + 1 条入口 = 19）。
 
-用例清单：`.dsh-crew/jobs/portable-package/M2-qa-plan.md` 的 T-19 段（1~17 条）。
+用例清单：`.dsh-crew/jobs/portable-package/M2-qa-plan.md` 的 T-19 段（1~17 条），
+外加安全加固后的 2 条：C-17 哈希不符不算命中、C-18 下载必须钉住 MEDIUM_REVISION。
 判据以契约 `docs/design/api/model-cache-pipeline.md` 为准（比 DoD 更严处：`find_local` 命中要
-`model.bin ≥ 1 GB` + `config.json` + `tokenizer.json` 三件套）。
+`model.bin ≥ 1 GB` + `config.json` + `tokenizer.json` + `vocabulary.txt` 四个文件的 sha256 全对）。
 被测：`pipeline\scripts\model_cache.py`；不联网——所有下载路径都用打桩（`_import_hub` / `_snapshot_download`）。
 不写真实缓存：所有合成缓存都在临时目录；第 16 条只读真实缓存并对比 mtime。
 
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import hashlib
 import json
 import os
 import shutil
@@ -155,16 +157,48 @@ def _snapshot(root: Path, name: str = "s1") -> Path:
     return snap
 
 
+# 合法样本的四件套用固定字节：所有样本内容相同，哈希只算一次。
+_CONFIG_BYTES = b'{"model": "medium", "qa": "t19"}\n'
+_TOKENIZER_BYTES = b'{"tokenizer": "qa-t19"}\n'
+_VOCAB_BYTES = b"<|qa|>\n<|end|>\n"
+_GOOD_HASHES = None
+
+
 def _write_meta(snap: Path) -> None:
-    (snap / "config.json").write_text("{}", encoding="utf-8")
-    (snap / "tokenizer.json").write_text("{}", encoding="utf-8")
+    (snap / "config.json").write_bytes(_CONFIG_BYTES)
+    (snap / "tokenizer.json").write_bytes(_TOKENIZER_BYTES)
+    (snap / "vocabulary.txt").write_bytes(_VOCAB_BYTES)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _good_hashes(snap: Path) -> dict:
+    """样本四件套的真实 sha256（合法样本内容相同，只算一次；1 GB 只读一次）。"""
+    global _GOOD_HASHES
+    if _GOOD_HASHES is None:
+        _GOOD_HASHES = {name: _sha256_file(snap / name) for name in mc.SNAPSHOT_FILES}
+    return dict(_GOOD_HASHES)
+
+
+def _write_valid(snap: Path) -> Path:
+    """结构 + 哈希都合法的样本（结构三件套 + vocabulary.txt，model.bin 1 GB 稀疏）。"""
+    snap.mkdir(parents=True, exist_ok=True)
+    _sparse(snap / "model.bin", 1_000_000_000)
+    _write_meta(snap)
+    return snap
 
 
 def _fake_hub(snap: Path, record: list | None = None):
     """返回一个 `_import_hub` 替身：记录 import 时刻的 HF_HUB_OFFLINE，并提供 snapshot_download。"""
     class Hub:
         @staticmethod
-        def snapshot_download(repo_id, allow_patterns=None, local_files_only=False):
+        def snapshot_download(repo_id, allow_patterns=None, revision=None, local_files_only=False):
             return str(snap)
 
     def _import():
@@ -273,37 +307,41 @@ def c03(ev):
 
 
 def c04(ev):
-    """4. find_local() 三件套逐件卡：缺 config / 缺 model.bin / model.bin<1GB 都 None；1GB 命中。"""
+    """4. find_local() 结构三件套 + 四件套 sha256：缺 config / 缺 model.bin / 太小 / 缺 tokenizer 都 None；合法样本命中。
+
+    安全加固后命中要求 4 个文件的 sha256 与 `SNAPSHOT_SHA256` 一致；样本是自己造的，
+    所以在**同一进程**里把常量 patch 成样本的真实哈希（子进程里 patch 传不进去）。
+    """
+    assert_("huggingface_hub" not in sys.modules,
+            "父进程里 huggingface_hub 已被 import，hf_hub_dir() 会以 constants 为准，本用例无法用临时 HF_HUB_CACHE")
     base = _newdir("findlocal")
     d1 = _snapshot(base / "r1")
     _sparse(d1 / "model.bin", 2_000_000_000)                       # 只有 model.bin
     d2 = _snapshot(base / "r2")
-    _write_meta(d2)                                                # 只有两个 json
+    _write_meta(d2)                                                # 只有三个小文件
     d3 = _snapshot(base / "r3")
     _sparse(d3 / "model.bin", 100_000_000)
     _write_meta(d3)                                                # 太小
-    d4 = _snapshot(base / "r4")
-    _sparse(d4 / "model.bin", 1_000_000_000)
-    _write_meta(d4)                                                # 三件齐
+    d4 = _write_valid(_snapshot(base / "r4"))                      # 结构 + 哈希都合法
     d5 = _snapshot(base / "r5")
     _sparse(d5 / "model.bin", 1_000_000_000)
-    (d5 / "config.json").write_text("{}", encoding="utf-8")        # 三件缺 tokenizer.json
-    roots = [str(base / n) for n in ("r1", "r2", "r3", "r4", "r5")]
-    code = ("import json, os, sys; sys.path.insert(0, %r); import model_cache; "
-            "out = []\nfor r in json.loads(os.environ['QA_ROOTS']):\n"
-            "    os.environ['HF_HUB_CACHE'] = r\n"
-            "    p = model_cache.find_local('medium')\n"
-            "    out.append(str(p) if p else None)\n"
-            "print(json.dumps(out))" % str(SCRIPTS))
-    lines = _child_lines(code, {"QA_ROOTS": json.dumps(roots)})
-    got = json.loads(lines[-1])
+    (d5 / "config.json").write_bytes(_CONFIG_BYTES)                # 缺 tokenizer.json
+    (d5 / "vocabulary.txt").write_bytes(_VOCAB_BYTES)
+    roots = [base / n for n in ("r1", "r2", "r3", "r4", "r5")]
     expect = [None, None, None, str(d4), None]
+    got = []
+    with patch_attr(mc, "SNAPSHOT_SHA256", _good_hashes(d4)):
+        for root in roots:
+            with env_patch(HF_HUB_CACHE=str(root)):
+                hit = mc.find_local("medium")
+            got.append(str(hit) if hit else None)
     assert_([None if x is None else _norm(x) for x in got] ==
             [None if x is None else _norm(x) for x in expect],
-            "find_local 结果 %r，期望 %r（①缺 config ②缺 model.bin ③100MB ④1GB 命中 ⑤缺 tokenizer 都 None）"
+            "find_local 结果 %r，期望 %r（①缺 config ②缺 model.bin ③100MB ④合法 ⑤缺 tokenizer）"
             % (got, expect))
-    ev.append("①缺config=%(a)s ②缺model=%(b)s ③100MB=%(c)s ④1GB=%(d)s ⑤缺tokenizer=%(e)s" % {
+    ev.append("①缺config=%(a)s ②缺model=%(b)s ③100MB=%(c)s ④合法=%(d)s ⑤缺tokenizer=%(e)s" % {
         "a": got[0], "b": got[1], "c": got[2], "d": got[3], "e": got[4]})
+    ev.append("命中判据含四件套 sha256（SNAPSHOT_SHA256 已 patch 成样本真实哈希）")
     for d in (d1, d2, d3, d4, d5):
         ev.append("%s: %s" % (d.parent.parent.parent.name,
                               ", ".join(sorted(p.name for p in d.iterdir()))))
@@ -369,10 +407,9 @@ def c07(ev):
 
 def c08(ev):
     """8. 允许下载时 "0" 的赋值发生在 import hub 之前（父环境留空串，setdefault 会留下空串 → 红）。"""
-    snap = _newdir("dl8") / "snap"
-    snap.mkdir(parents=True, exist_ok=True)
-    _sparse(snap / "model.bin", 1_000_000_000)
-    _write_meta(snap)
+    cache = _newdir("dl8cache")
+    # 下载后的"产物"必须真在缓存根下（实现下载后会用 _locate_snapshot 扫缓存，不是在打桩里拿返回值）。
+    snap = _write_valid(_snapshot(cache, "dl8"))
     counter = {"n": 0}
 
     def find(model="medium"):
@@ -380,10 +417,10 @@ def c08(ev):
         return None if counter["n"] == 1 else snap
 
     record = []
-    cache = _newdir("dl8cache")
     # 父环境先留一个空串（不是 "1"，不会触发离线分支）：必须被**赋值**成 "0"；
     # 若实现用 setdefault，空串会留下来，这条就红。
-    with env_patch(HF_HUB_OFFLINE="", WB_MODEL_DOWNLOAD=_UNSET, HF_HUB_CACHE=cache), \
+    with patch_attr(mc, "SNAPSHOT_SHA256", _good_hashes(snap)), \
+            env_patch(HF_HUB_OFFLINE="", WB_MODEL_DOWNLOAD=_UNSET, HF_HUB_CACHE=cache), \
             patch_attr(mc, "find_local", find), patch_attr(mc, "_import_hub", _fake_hub(snap, record)):
         got = mc.ensure_model(allow_download=True, reporter=lambda s: None)
         value = os.environ.get("HF_HUB_OFFLINE")
@@ -427,10 +464,8 @@ def c10(ev):
 
 def c11(ev):
     """11. 下载路径打印序列首行含 正在下载 / 约 1.5 GB，并返回打桩目录。"""
-    snap = _newdir("dl11") / "snap"
-    snap.mkdir(parents=True, exist_ok=True)
-    _sparse(snap / "model.bin", 1_000_000_000)
-    _write_meta(snap)
+    cache = _newdir("dl11cache")
+    snap = _write_valid(_snapshot(cache, "dl11"))
     counter = {"n": 0}
 
     def find(model="medium"):
@@ -438,8 +473,8 @@ def c11(ev):
         return None if counter["n"] == 1 else snap
 
     lines = []
-    cache = _newdir("dl11cache")
-    with env_patch(HF_HUB_OFFLINE=_UNSET, WB_MODEL_DOWNLOAD=_UNSET, HF_HUB_CACHE=cache), \
+    with patch_attr(mc, "SNAPSHOT_SHA256", _good_hashes(snap)), \
+            env_patch(HF_HUB_OFFLINE=_UNSET, WB_MODEL_DOWNLOAD=_UNSET, HF_HUB_CACHE=cache), \
             patch_attr(mc, "find_local", find), patch_attr(mc, "_import_hub", _fake_hub(snap)):
         got = mc.ensure_model(allow_download=True, reporter=lines.append)
     assert_(lines, "下载路径没有任何打印")
@@ -546,6 +581,8 @@ def c16(ev):
     assert_(snap_line != "None", "find_local('medium') 返回 None（真实缓存没被认出来）")
     snap = Path(snap_line)
     assert_(snap.is_dir(), "find_local 返回的不是目录：%r" % snap_line)
+    assert_(snap.name == mc.MEDIUM_REVISION,
+            "真实快照目录名 %r 与钉住的 MEDIUM_REVISION=%r 不一致" % (snap.name, mc.MEDIUM_REVISION))
     model_bin = snap / "model.bin"
     assert_(model_bin.is_file() and model_bin.stat().st_size >= mc.MIN_MODEL_BYTES,
             "真实快照的 model.bin 不存在或 < 1 GB：%r" % (str(model_bin),))
@@ -556,11 +593,79 @@ def c16(ev):
     ev.append("缓存目录 mtime 前后一致：%d 处" % len(watched))
 
 
+def c17(ev):
+    """17（安全加固新增）：哈希不符 → 不命中；禁止下载时 ModelMissing 且消息含「校验失败」。
+
+    样本是自己造的，所以在同一进程里把 SNAPSHOT_SHA256 patch 成**合法样本**的真实哈希；
+    再把另一个样本的 tokenizer.json 改一个字节（model.bin 相同），它必须判为未命中。
+    """
+    assert_("huggingface_hub" not in sys.modules,
+            "父进程里 huggingface_hub 已被 import，hf_hub_dir() 会以 constants 为准，本用例无法用临时 HF_HUB_CACHE")
+    good_root = _newdir("hash_good")
+    good = _write_valid(_snapshot(good_root, "good"))
+    bad_root = _newdir("hash_bad")
+    bad = _write_valid(_snapshot(bad_root, "bad"))
+    (bad / "tokenizer.json").write_bytes(b'{"tokenizer": "QA-CORRUPT"}\n')
+    hashes = _good_hashes(good)
+    with patch_attr(mc, "SNAPSHOT_SHA256", hashes):
+        with env_patch(HF_HUB_CACHE=str(good_root)):
+            hit = mc.find_local("medium")
+        with env_patch(HF_HUB_CACHE=str(bad_root), HF_HUB_OFFLINE=_UNSET, WB_MODEL_DOWNLOAD=_UNSET):
+            miss = mc.find_local("medium")
+            try:
+                mc.ensure_model(allow_download=False, reporter=lambda s: None)
+                raise AssertionError("哈希不符且禁止下载时应抛 ModelMissing，实际没抛")
+            except mc.ModelMissing as exc:
+                msg = str(exc)
+    assert_(hit == good, "合法样本应命中 %r，实得 %r（patch 的哈希不对？）" % (good, hit))
+    assert_(miss is None, "被改过一字节的样本仍被判命中：%r" % (miss,))
+    for token in ("校验失败", "tokenizer.json"):
+        assert_(token in msg, "哈希不符的 ModelMissing 消息缺 %r：%s" % (token, msg))
+    ev.append("合法样本命中：%s" % hit)
+    ev.append("tokenizer.json 改 1 字节后 find_local=None")
+    ev.append("ModelMissing：%s" % msg.replace("\n", " ")[:170])
+
+
+def c18(ev):
+    """18（安全加固新增）：_snapshot_download 收到的 revision 必须等于 MEDIUM_REVISION。"""
+    cache = _newdir("revision_cache")
+    snap = _write_valid(_snapshot(cache, "revision"))
+    counter = {"n": 0}
+
+    def find(model="medium"):
+        counter["n"] += 1
+        return None if counter["n"] == 1 else snap
+
+    called = {}
+
+    def fake_download(repo_id, allow_patterns=(), revision=None):
+        called.update({"repo_id": repo_id, "allow_patterns": tuple(allow_patterns),
+                       "revision": revision})
+        return str(snap)
+
+    with patch_attr(mc, "SNAPSHOT_SHA256", _good_hashes(snap)), \
+            env_patch(HF_HUB_OFFLINE=_UNSET, WB_MODEL_DOWNLOAD=_UNSET, HF_HUB_CACHE=cache), \
+            patch_attr(mc, "find_local", find), patch_attr(mc, "_snapshot_download", fake_download):
+        got = mc.ensure_model(allow_download=True, reporter=lambda s: None)
+    assert_(got == snap, "返回 %r，期望 %r" % (got, snap))
+    assert_(called.get("revision") == mc.MEDIUM_REVISION,
+            "下载收到的 revision=%r，期望钉住的 MEDIUM_REVISION=%r"
+            % (called.get("revision"), mc.MEDIUM_REVISION))
+    assert_(called.get("repo_id") == mc.HF_REPO["medium"],
+            "下载收到的 repo_id=%r，期望 %r" % (called.get("repo_id"), mc.HF_REPO["medium"]))
+    assert_(called.get("allow_patterns") == tuple(mc.ALLOW_PATTERNS),
+            "下载收到的 allow_patterns=%r，期望 %r"
+            % (called.get("allow_patterns"), tuple(mc.ALLOW_PATTERNS)))
+    ev.append("revision=%r（MEDIUM_REVISION=%r）" % (called.get("revision"), mc.MEDIUM_REVISION))
+    ev.append("repo_id=%r；allow_patterns=%d 项" % (called.get("repo_id"),
+                                                   len(called.get("allow_patterns") or ())))
+
+
 CASES = [
     ("C-01", "pipeline 单测 test_model_cache.py 通过", c01),
     ("C-02", "hf_hub_dir() 五级优先、逐级独立、多级取高", c02),
     ("C-03", "hf_hub_dir() 不创建目录", c03),
-    ("C-04", "find_local() 三件套逐件卡（缺config/缺model/缺tokenizer/100MB/1GB）", c04),
+    ("C-04", "find_local() 结构三件套 + 四件套哈希（缺config/缺model/缺tokenizer/100MB/合法）", c04),
     ("C-05", "ensure_model(model_dir=...) 只校验目录、不 import hub", c05),
     ("C-06", "allow_download=False / WB_MODEL_DOWNLOAD=0 → ModelMissing（三关键词）", c06),
     ("C-07", "命中缓存后 HF_HUB_OFFLINE=1", c07),
@@ -572,7 +677,9 @@ CASES = [
     ("C-13", "ALLOW_PATTERNS 与 faster_whisper 同一组（5 个）", c13),
     ("C-14", "download_progress_line 三个输入", c14),
     ("C-15", "模块顶层只 import 标准库", c15),
-    ("C-16", "真实缓存只读验证（XDG=真实缓存，find_local 命中，mtime 不变）", c16),
+    ("C-16", "真实缓存只读验证（XDG=真实缓存，命中且 revision 一致，mtime 不变）", c16),
+    ("C-17", "哈希不符 → 不命中；禁止下载时 ModelMissing 含「校验失败」", c17),
+    ("C-18", "_snapshot_download 收到的 revision == MEDIUM_REVISION", c18),
 ]
 
 
@@ -584,7 +691,7 @@ def _print_ev(ev):
 
 
 def main() -> int:
-    print("qa/T-19/run.py —— T-19 model_cache 独立验收（用例清单：M2-qa-plan.md T-19 1~17）")
+    print("qa/T-19/run.py —— T-19 model_cache 独立验收（用例清单：M2-qa-plan.md T-19 1~17 + 安全加固 2 条 = 19）")
     print("被测：%s" % MODULE)
     print("解释器：%s" % PY)
     print("不联网：所有下载路径打桩；合成缓存全部在 %s" % TMP)
@@ -607,10 +714,10 @@ def main() -> int:
                 _print_ev(ev)
                 ok += 1
         if fail == 0:
-            print("ok C-17 QA 入口（16 条实现用例全部通过，退出 0）")
+            print("ok C-19 QA 入口（18 条实现用例全部通过，退出 0）")
             ok += 1
         else:
-            print("FAIL C-17 QA 入口 -> %d 条用例未通过" % fail)
+            print("FAIL C-19 QA 入口 -> %d 条用例未通过" % fail)
             fail += 1
         total = ok + fail
         print("")

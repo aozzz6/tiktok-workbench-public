@@ -269,7 +269,13 @@ def t20_05():
 
 
 def t20_06():
-    """DoD 1(e)：--backend auto 与 faster 同走 faster 分支，且都不 import torch/whisper。"""
+    """DoD 1(e)：--backend auto 与 faster 同走 faster 分支，且都不 import torch/whisper。
+
+    2026-11-06（安全评审后）：产品日志把「有没有真的探测 CUDA」写出来了 ——
+    `auto` 探测 → `probe=done cuda_devices=0 cudnn=False`；`faster` 不探 → `probe=skipped`
+    （不再谎报 0/False）。所以两行**只在 `probe=` 段不同是对的**：本条只比
+    `backend=/device=/compute_type=/model=` 四段，并额外要求 faster 那行是 `probe=skipped`。
+    """
     tmp = _tmpdir()
     audio = _make_audio(tmp)
     model = _make_model_dir(tmp)
@@ -286,13 +292,29 @@ def t20_06():
                 return line[line.index("backend="):].strip()
         return None
 
+    def segs(line, keys=("backend", "device", "compute_type", "model", "probe")):
+        out = {}
+        for key in keys:
+            m = re.search(rf"(?:^|\s){key}=(\S+)", line or "")
+            out[key] = m.group(1) if m else None
+        return out
+
     la, lf = backend_line(auto[2]), backend_line(fast[2])
     assert_(la is not None, f"auto 没打印 backend= 行：{_tail(auto[3])}")
     assert_(lf is not None, f"faster 没打印 backend= 行：{_tail(fast[3])}")
-    assert_(la.startswith("backend=faster"), f"auto 的 backend 行不是 faster：{la!r}")
-    assert_(lf.startswith("backend=faster"), f"faster 的 backend 行不是 faster：{lf!r}")
-    assert_(la == lf, f"无 CUDA 环境里 auto 与 faster 必须整行一致：{la!r} vs {lf!r}")
+    sa, sf = segs(la), segs(lf)
+    same_keys = ("backend", "device", "compute_type", "model")
+    missing = [k for k in same_keys if sa.get(k) is None or sf.get(k) is None]
+    assert_(not missing, f"两行缺少这些段 {missing}：auto={la!r} faster={lf!r}")
+    diff = {k: (sa[k], sf[k]) for k in same_keys if sa[k] != sf[k]}
+    assert_(not diff, f"auto 与 faster 的 {list(same_keys)} 必须一致，实得差异 {diff}")
+    assert_(sa["backend"] == "faster", f"auto 的 backend 段不是 faster：{la!r}")
     assert_("device=cpu" in la, f"无 CUDA 环境应选 CPU：{la!r}")
+    # 唯一允许不同的就是 probe=：auto 真探测、faster 明确跳过
+    assert_(sa.get("probe") == "done",
+            f"auto 应当真的探测（probe=done …），实得 {la!r}")
+    assert_(sf.get("probe") == "skipped",
+            f"faster 那行必须是 probe=skipped（不再谎报 0/False），实得 {lf!r}")
     for proc, label in ((auto, "auto"), (fast, "faster")):
         err = proc[2]
         assert_("simulated torch" not in err, f"{label} 分支 import 了 torch")
@@ -306,7 +328,11 @@ def t20_06():
     bad = [ln for ln in it[3].splitlines()
            if re.match(r"^import time:.*\|\s*(torch|whisper)(\.|\s|$)", ln.strip())]
     assert_(not bad, f"importtime 里出现 torch/whisper 导入：{bad[:3]}")
-    return [f"auto  ：{la}", f"faster：{lf}", "importtime：torch/whisper 命中 0 行"]
+    return [f"auto  ：{la}",
+            f"faster：{lf}",
+            f"四段一致：{ {k: sa[k] for k in same_keys} }（probe= 段允许不同："
+            f"auto={sa.get('probe')} / faster={sf.get('probe')}）",
+            "importtime：torch/whisper 命中 0 行"]
 
 
 # ────────────────────────── T20-07：CRD-0006 的 QA 改动 ──────────────────────────
@@ -489,6 +515,38 @@ def _env_snapshot(env):
                                                 "HF_HOME", "WB_ROOT", "PYTHONPATH")}
 
 
+def _snapshot_deps():
+    """把 `build\\portable\\slim` 的 site-packages 先快照到临时目录再交给构建。
+
+    为什么要快照：`--deps-from` 直接指 `build\\portable\\slim` 时，如果有别人正在并行重建
+    `build\\portable`（PM/别的 agent），复制会拿到半份依赖 → 包内 `import fastapi` 直接
+    `ModuleNotFoundError`（2026-11-06 实测撞过一次）。快照 + 关键包校验把这一条变成
+    「拿到稳定副本才开始」，而不是把并行构建的噪声算成产品缺陷。
+    """
+    if "deps" in _state:
+        return _state["deps"]
+    assert_(SLIM_SITE.is_dir(), f"没有可复用的已装依赖：{SLIM_SITE}（先按 M1 建一次 slim）")
+    must = ("fastapi/__init__.py", "faster_whisper/__init__.py", "ctranslate2/__init__.py")
+    tmp = _tmpdir("t20qa_deps_")
+    snap = tmp / "site-packages"
+    deadline = time.time() + 300
+    last = ""
+    while time.time() < deadline:
+        ready = all((SLIM_SITE / rel).is_file() for rel in must)
+        if ready:
+            shutil.rmtree(snap, ignore_errors=True)
+            shutil.copytree(SLIM_SITE, snap,
+                            ignore=shutil.ignore_patterns("pip*", "__pycache__", "*.pyc"))
+            if all((snap / rel).is_file() for rel in must):
+                _state["deps"] = snap
+                return snap
+            last = "复制后的快照缺关键包（大概率撞上并行重建）"
+        else:
+            last = f"{SLIM_SITE} 里还没有 fastapi / faster_whisper / ctranslate2"
+        time.sleep(3)
+    raise AssertionError(f"拿不到稳定的依赖快照（{last}）——可能有并行构建正在重建 build\\portable，稍后重跑")
+
+
 def _prepare_package():
     """重建 full 包 → 复制到中文+空格临时目录 → 造 45 s 音频；返回 (包路径, 音频目录, 构建秒数, 复制秒数)。"""
     if "pkgdir" in _state:
@@ -496,11 +554,11 @@ def _prepare_package():
     assert_(BUILD.is_file(), f"缺少构建脚本 {BUILD}")
     assert_(FFMPEG_BIN.is_dir(), f"ffmpeg 9.0.2 目录不存在：{FFMPEG_BIN}")
     assert_(HF_HUB.is_dir(), f"HF 缓存不存在：{HF_HUB}")
-    assert_(SLIM_SITE.is_dir(), f"没有可复用的已装依赖：{SLIM_SITE}（先按 M1 建一次 slim）")
+    deps = _snapshot_deps()
     t0 = time.time()
     rc, out, err, text = _run([WEBAPP_PY, BUILD, "--flavor", "full", "--out", str(PKG_ROOT),
                                "--ffmpeg-dir", str(FFMPEG_BIN), "--hf-cache", str(HF_HUB),
-                               "--deps-from", str(SLIM_SITE)], timeout=3600)
+                               "--deps-from", str(deps)], timeout=3600)
     build_s = time.time() - t0
     assert_(rc == 0, f"full 构建失败 rc={rc}；输出尾：{_tail(text, 12)}")
     assert_(PKG.is_dir(), f"构建没产出 {PKG}")
