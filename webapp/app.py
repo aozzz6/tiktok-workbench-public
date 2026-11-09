@@ -83,8 +83,17 @@ _accounts_cache: dict = {"ts": 0.0, "data": None}
 
 @app.get("/api/health")
 def health() -> dict:
-    """健康检查 + 接口版本指纹（启动器据此判断是否需要重启，见 R6）。"""
+    r"""健康检查 + 接口版本指纹（启动器据此判断是否需要重启，见 R6）。
+
+    ★ M3（T-25）：带包根（= `webapp\` 的上一级）`VERSION` 里的版本号，页面右上角显示它。
+      读不到或读坏了给 `"0.0.0"` —— 健康检查本身绝不能因为版本文件而抛异常。
+    """
+    try:
+        _version = (config.WEBAPP_DIR.parent / "VERSION").read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        _version = ""
     return {"ok": True, "ts": time.time(), "api_version": API_VERSION,
+            "version": _version or "0.0.0",
             "features": list(API_FEATURES), "diagnostics": config.diagnostics()}
 
 

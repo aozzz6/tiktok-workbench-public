@@ -2766,7 +2766,7 @@ async function doRunGroup(gid) {
     date_to: today(),
     steps: (CFG && CFG.local_steps) || ["s1_download", "s2_scrape", "s5_transcribe", "s5b_products", "s9_report"],
     lang: $("#run-lang") && $("#run-lang").value ? $("#run-lang").value : "en",
-    backend: $("#run-backend") && $("#run-backend").value ? $("#run-backend").value : "openai",
+    backend: $("#run-backend") && $("#run-backend").value ? $("#run-backend").value : "auto",
   };
   try {
     const run = await api("/api/run", {
