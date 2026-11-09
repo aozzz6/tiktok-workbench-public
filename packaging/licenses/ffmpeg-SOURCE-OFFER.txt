@@ -1,0 +1,197 @@
+FFmpeg corresponding-source offer — GPLv3 §6(b) written offer
+================================================================
+
+Applies to: the portable package `tiktok-workbench-<version>-full.zip` and
+`tiktok-workbench-<version>-slim.zip`.
+This file is part of the license bundle that ships inside the package under
+`<pkg>\licenses\`. The full license text is `ffmpeg-COPYING.GPLv3.txt` in the
+same folder.
+
+------------------------------------------------------------------------------
+1. What we distribute
+------------------------------------------------------------------------------
+
+The package ships a prebuilt Windows x64 FFmpeg:
+
+    ffmpeg version 9.0.2-essentials_build-www.gyan.dev
+
+    files:   <pkg>\ffmpeg\bin\ffmpeg.exe
+             <pkg>\ffmpeg\bin\ffprobe.exe
+    license: GPLv3
+    build:   --enable-gpl --enable-version3 --enable-static
+             (the build's own README.txt says: License: GPL v3)
+    source:  FFmpeg commit 946fcce07b
+             https://github.com/FFmpeg/FFmpeg/commit/946fcce07b
+
+Because the build is `--enable-static`, the third-party libraries listed in
+§3 are statically linked into those two executables, so they are distributed
+as part of the same binaries and are covered by the same GPLv3 obligation.
+
+The workbench calls `ffmpeg.exe` / `ffprobe.exe` as **separate spawn
+processes** (Python `subprocess`) and does **not link** them with the
+project's own code — see §6. A second, different FFmpeg copy is loaded inside
+the process by PyAV; it is described in `PYAV-FFMPEG-SOURCE.txt` and is
+included in the scope of this offer (see §2).
+
+------------------------------------------------------------------------------
+2. GPLv3 §6(b) written offer (all three elements)
+------------------------------------------------------------------------------
+
+This section is the written offer required by GNU GPL version 3, section 6(b).
+It is not only an "if the link breaks, ask us" note: all three elements below
+are part of the offer.
+
+(i) **Validity — three (3) years.**
+    This offer is valid for at least **three (3) years** from the date this
+    package is released to the public. (GPLv3 §6(b) sets three years as the
+    minimum; we use exactly that minimum and state it explicitly.)
+
+(ii) **Scope — the complete corresponding source.**
+     The offer covers the complete corresponding source code for every GPL
+     component distributed in this package:
+       * the FFmpeg build above (commit 946fcce07b), including
+       * the 37 third-party libraries statically linked into it (listed in §3
+         with the versions reported by the build's own README), and
+       * the FFmpeg embedded in the PyAV wheel (`av==14.2.0`, FFmpeg **7.1**;
+         see `PYAV-FFMPEG-SOURCE.txt`).
+     The same source is also published next to the binaries as the release
+     assets listed in §4 (GPLv3 §6(d)); either way of obtaining it satisfies
+     the obligation.
+
+(iii) **Cost — medium and postage only, plus a concrete contact.**
+     We charge **only the cost of the medium and postage** for a physical
+     copy — no fee for the source itself, no handling markup. To request it,
+     open an issue at
+
+         https://github.com/aozzz6/tiktok-workbench-public/issues
+
+     with the title `GPL source request` and state which release version you
+     need; that issue tracker is the concrete request channel for this offer.
+     (The same channel also works if a download link in §4 ever breaks.)
+
+------------------------------------------------------------------------------
+3. The 37 statically linked third-party libraries
+------------------------------------------------------------------------------
+
+Verbatim from the build's README.txt section
+"release-essentials external libraries' versions" (37 entries):
+
+    AMF v1.5.2-2-gc35f613                     aom v3.15.0-25-g023743a7d7
+    AviSynthPlus v3.7.5-383-g5c82777b         cairo 1.18.5
+    ffnvcodec n13.1.15.0-1-geddcea9           freetype VER-2-14-3
+    fribidi v1.0.16-19-gc928e4c               gsm 1.0.24
+    harfbuzz 14.4.0-108-g64e2b532             lame 3.100
+    libass 0.17.5-8-gb2fe9d8                  libgme 0.6.6
+    libopencore-amrnb 0.1.6                   libopencore-amrwb 0.1.6
+    libssh 0.12.2                             libtheora v1.2.0
+    libwebp v1.6.0-249-g1f34635               openal-soft 1.25.2-48-g7532541
+    openjpeg2 2.5.4                           openmpt libopenmpt-0.6.30-3-g6c0a06bc
+    opus v1.6.1-68-g503d81b1                  rubberband v4.0.0
+    SDL release-2.32.0-234-gb90ac9502         speex Speex-1.2.1-51-g0589522
+    srt v1.5.7-7-gcae8f62                     VAAPI 2.25.0.
+    vidstab v1.1.2-214-ge2445c4               vmaf v3.2.0-13-gf85a8536
+    vo-amrwbenc 0.1.3                         vorbis v1.3.7-37-g1b75110b
+    VPL 2.17                                  vpx v1.17.0-57-gd2413e2ca
+    x264 v0.165.3223                          x265 4.3-45-g116b875
+    xvid v1.3.7                               zeromq 4.3.5
+    zimg release-3.0.6-253-g67e0603
+
+The build's "External libraries" list has 42 entries; 9 of them have no separate
+version line in that README (bzlib, gmp, gnutls, iconv, libxml2, libfontconfig,
+lzma, mediafoundation, zlib). The 37-line version list above also contains four
+hardware-acceleration bindings (AMF, ffnvcodec, VAAPI, VPL), which the README
+lists in its own block. All the statically linked libraries are covered by this
+offer either way. Their upstream versions are recorded in the release asset
+`ffmpeg-9.0.2-static-libs-sources.txt`.
+
+------------------------------------------------------------------------------
+4. Release assets (same network location as the binaries — GPLv3 §6(d))
+------------------------------------------------------------------------------
+
+The release that carries the two ZIPs must also carry these four files. All
+six files together are the release; a release missing any of them is
+incomplete:
+
+    tiktok-workbench-<version>-full.zip      the binaries (full package)
+    tiktok-workbench-<version>-slim.zip      the binaries (slim package)
+    ffmpeg-9.0.2-source.tar.xz               FFmpeg source, commit 946fcce07b
+    ffmpeg-7.1-source.tar.xz                 FFmpeg source for the PyAV copy
+    ffmpeg-9.0.2-static-libs-sources.txt     index: the 37 libraries + upstreams
+    pyav-14.2.0-ffmpeg-source.txt            index: how PyAV's FFmpeg was built
+
+`ffmpeg-9.0.2-static-libs-sources.txt` and `pyav-14.2.0-ffmpeg-source.txt` are
+indexes; they complement the two source tarballs and do **not** replace them.
+
+------------------------------------------------------------------------------
+5. How to download and verify the source
+------------------------------------------------------------------------------
+
+Canonical FFmpeg release tarballs (what the asset names above come from):
+
+    curl -L -O https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
+    curl -L -O https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz
+
+If a release tarball is unavailable, the exact commit/tag archive is
+equivalent (GitHub produces it on demand):
+
+    # CLI FFmpeg — the commit named by the build's own README
+    curl -L -o ffmpeg-9.0.2-source.tar.gz \
+      https://github.com/FFmpeg/FFmpeg/archive/946fcce07b.tar.gz
+
+    # the FFmpeg inside PyAV — release tag n7.1
+    curl -L -o ffmpeg-7.1-source.tar.gz \
+      https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n7.1.tar.gz
+
+Verification:
+
+  * `SHA256SUMS.txt` in the same release lists the SHA-256 of every asset;
+    after downloading, compare with `Get-FileHash -Algorithm SHA256` (Windows)
+    or `sha256sum` (Unix).
+  * ffmpeg.org also publishes `<tarball>.sha256` next to each release tarball.
+  * The commit id `946fcce07b` is what the distributed build's README.txt
+    names as its source; it is quoted in §1.
+
+This machine did **not** download the two tarballs (they are ~10–20 MB each).
+The download and checksum verification is a release-time step and must be done
+before the release is published.
+
+------------------------------------------------------------------------------
+6. How the workbench uses ffmpeg (no linking)
+------------------------------------------------------------------------------
+
+The workbench runs `ffmpeg.exe` / `ffprobe.exe` as **separate processes** and
+communicates only through command-line arguments and files. The project's own
+code does **not** link against FFmpeg, does not include FFmpeg headers, and is
+not a derivative work of FFmpeg. ffmpeg is found on `PATH` (the packaged
+`_setenv.bat` puts `<pkg>\ffmpeg\bin` first).
+
+The separate FFmpeg copy shipped inside the PyAV wheel is a different case: it
+is loaded **in the same process** by the `av` Python extension (used by
+faster-whisper to decode audio). It is described, with its version and source
+details, in `PYAV-FFMPEG-SOURCE.txt`.
+
+------------------------------------------------------------------------------
+7. What this offer does not cover
+------------------------------------------------------------------------------
+
+  * The project's own source code: MIT — see `LICENSE` at the package root.
+  * Python packages bundled in the package: each keeps its own license; the
+    package list is `licenses\PYTHON-PACKAGES.txt`, and the original metadata
+    (`*.dist-info`) is kept under `python\Lib\site-packages\`.
+  * Microsoft Visual C++ runtime DLLs: Microsoft's redistributable terms; see
+    `THIRD_PARTY_NOTICES.md`.
+  * The `av` python wheel itself: BSD-3-Clause (PyAV), separate from the
+    FFmpeg binaries it bundles.
+
+------------------------------------------------------------------------------
+8. 中文要点（给使用者）
+------------------------------------------------------------------------------
+
+本包内含 GPLv3 的 ffmpeg（`ffmpeg.exe`/`ffprobe.exe`）以及 PyAV 轮子里那份
+FFmpeg 7.1。按 GPLv3 §6(b)，我们承诺：自本包发布之日起 **三年内**，任何人
+都可以索取这些二进制的**完整对应源码**（含 CLI 的 FFmpeg、它静态链接的 37 个
+库、以及 av 内嵌的那份 FFmpeg）；我们**只收取介质与邮寄的实际成本**。
+请求渠道（具体地址）：https://github.com/aozzz6/tiktok-workbench-public/issues
+（标题写 `GPL source request`）。同一份源码也可以直接从本 Release 的
+`ffmpeg-9.0.2-source.tar.xz` / `ffmpeg-7.1-source.tar.xz` 下载，校验值见同目录
+`SHA256SUMS.txt`。我们**不修改、不链接**这份 CLI ffmpeg，只以独立进程调用。

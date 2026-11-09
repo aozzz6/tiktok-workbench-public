@@ -1,0 +1,136 @@
+The FFmpeg inside PyAV — corresponding-source information
+========================================================
+
+This file describes the **second** FFmpeg copy that ships in the portable
+package. It is different from `<pkg>\ffmpeg\bin\ffmpeg.exe` (the CLI build
+described in `ffmpeg-SOURCE-OFFER.txt`).
+
+------------------------------------------------------------------------------
+1. Where it is and how it is loaded
+------------------------------------------------------------------------------
+
+The package bundles the `av` Python package (PyAV), which is a Python binding
+to FFmpeg. The PyAV wheel ships its own prebuilt FFmpeg DLLs:
+
+    Python package:  av == 14.2.0
+    location:        <pkg>\python\Lib\site-packages\av.libs\*.dll
+    loaded by:       python\Lib\site-packages\av (the .pyd extension)
+    who uses it:     faster-whisper, to decode audio before transcription
+
+Unlike the CLI build, this FFmpeg is **loaded in the same process** as the
+workbench's Python code (through PyAV's `_core` extension). It is a separate,
+independent copy of FFmpeg: it is not the same binary as `ffmpeg.exe`, and it
+is not the same build.
+
+`av.libs` contains 36 DLLs: the FFmpeg libraries themselves plus the
+third-party libraries they were built against (see §4). `libx264` and `libx265`
+are among them, so this build contains GPL components and is distributed under
+**GPLv3**, exactly like the CLI build. The corresponding-source obligation
+therefore covers this copy too.
+
+------------------------------------------------------------------------------
+2. Which FFmpeg version is embedded
+------------------------------------------------------------------------------
+
+FFmpeg **7.1**. This is what the wheel itself reports at run time (run inside
+the package: `<pkg>\python\python.exe -c "import av; print(av.library_versions)"`):
+
+    libavutil      59.39.100
+    libavcodec     61.19.100
+    libavformat    61.7.100
+    libavdevice    61.3.100
+    libavfilter    10.4.100
+    libswscale      8.3.100
+    libswresample   5.3.100
+
+These are exactly the library versions of the FFmpeg 7.1 release. The DLL
+names agree: `avcodec-61-*.dll`, `avformat-61-*.dll`, `avfilter-10-*.dll`,
+`avutil-59-*.dll`, `swscale-8-*.dll`, `swresample-5-*.dll`, `postproc-58-*.dll`.
+(The CLI build in `ffmpeg\bin` is FFmpeg 9.0.2 — two different versions, two
+different binaries, both distributed in this package.)
+
+`av == 14.2.0` is pinned in `pipeline\requirements-portable.txt`, and the
+package's `licenses\PYTHON-PACKAGES.txt` lists the installed version.
+
+------------------------------------------------------------------------------
+3. How to obtain its corresponding source
+------------------------------------------------------------------------------
+
+The FFmpeg 7.1 source is published as a release asset next to the package:
+
+    ffmpeg-7.1-source.tar.xz        <- the source; sha256 in SHA256SUMS.txt
+    pyav-14.2.0-ffmpeg-source.txt   <- the index for this file's details
+
+Download and verify (release time):
+
+    curl -L -O https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz
+    # fallback: the exact release tag archive
+    curl -L -o ffmpeg-7.1-source.tar.gz \
+      https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n7.1.tar.gz
+    # verify
+    Get-FileHash -Algorithm SHA256 ffmpeg-7.1-source.tar.xz    # Windows
+    sha256sum ffmpeg-7.1-source.tar.xz                          # Unix
+
+How the PyAV wheel itself was built: the wheel comes from PyPI (`av`, version
+14.2.0 — <https://pypi.org/project/av/14.2.0/>). PyAV's own source and its
+wheel build scripts are linked from that PyPI page (project homepage /
+`Source`). The wheel packages a prebuilt FFmpeg 7.1 for Windows; rebuilding it
+from PyAV's scripts plus the FFmpeg 7.1 source above reproduces the binaries in
+`av.libs`.
+
+The same GPLv3 §6(b) written offer in `ffmpeg-SOURCE-OFFER.txt` covers this
+copy: three (3) years from release, the complete corresponding source of this
+FFmpeg 7.1 and the libraries it links, medium/postage cost only, requests via
+<https://github.com/aozzz6/tiktok-workbench-public/issues> (title:
+`GPL source request`).
+
+------------------------------------------------------------------------------
+4. The 36 DLLs in `av.libs` (FFmpeg + its third-party libraries)
+------------------------------------------------------------------------------
+
+    FFmpeg libraries:
+      avcodec-61-*.dll  avdevice-61-*.dll  avfilter-10-*.dll  avformat-61-*.dll
+      avutil-59-*.dll   postproc-58-*.dll  swresample-5-*.dll  swscale-8-*.dll
+
+    Third-party libraries linked into this FFmpeg:
+      libaom-*.dll            libdav1d-*.dll          libmp3lame-*.dll
+      libogg-*.dll            libopencore-amrnb-*.dll libopencore-amrwb-*.dll
+      libopus-*.dll           libspeex-*.dll          libsrt-*.dll
+      libSvtAv1Enc-*.dll      libtwolame-*.dll        libvorbis-*.dll
+      libvorbisenc-*.dll      libvpx-*.dll            libwebp-*.dll
+      libwebpmux-*.dll        libx264-*.dll           libx265-*.dll
+      libxml2-*.dll           libiconv-*.dll          liblzma-*.dll
+      libgmp-*.dll            zlib1-*.dll             libsharpyuv-*.dll
+
+    C/C++ runtime shipped with the wheel (build toolchain, not FFmpeg itself):
+      libcrypto-1_1-x64-*.dll libgcc_s_seh-1-*.dll   libstdc++-6-*.dll
+      libwinpthread-*.dll
+
+(The `*.dll` names above are abbreviated: in the package each file also carries
+a content hash before `.dll`, e.g. `avcodec-61-b05faad61eae5b49f85f9c8dab4dd5cd.dll`.)
+
+------------------------------------------------------------------------------
+5. What this copy is not
+------------------------------------------------------------------------------
+
+  * It is not the same binary as `<pkg>\ffmpeg\bin\ffmpeg.exe` (that one is
+    FFmpeg 9.0.2). Removing or replacing one does not affect the other.
+  * It is not invoked as a subprocess. It is loaded into the workbench's own
+    Python process by the `av` extension; that is why its source obligation is
+    documented here separately from the CLI offer.
+  * The `av` Python package itself is BSD-3-Clause (PyAV). That license covers
+    PyAV's Python code; the bundled FFmpeg DLLs remain GPLv3.
+
+------------------------------------------------------------------------------
+6. 中文要点（给使用者）
+------------------------------------------------------------------------------
+
+包里其实有**两份** FFmpeg：一份是我们自己带的命令行版（`ffmpeg.exe`，9.0.2），
+另一份藏在 Python 的 `av`（PyAV 14.2.0）轮子里，`av.libs\` 下有 36 个 DLL，
+**在同一进程内**被加载（音频解码用）。这份内嵌的是 **FFmpeg 7.1**，因为带
+`libx264`/`libx265`，同样是 GPLv3。它的对应源码就是本 Release 里的
+`ffmpeg-7.1-source.tar.xz`（校验值见 `SHA256SUMS.txt`），也可以用
+<https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz> 或
+<https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n7.1.tar.gz> 取。
+索取渠道与书面要约同 `ffmpeg-SOURCE-OFFER.txt`：
+<https://github.com/aozzz6/tiktok-workbench-public/issues>（标题写 `GPL source request`）。
