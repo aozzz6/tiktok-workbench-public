@@ -147,6 +147,8 @@ def make_fake_python_home(root: Path) -> Path:
         (lib / d).mkdir(parents=True, exist_ok=True)
     write(lib / "os.py", "# stub\n")
     write(lib / "zipfile.py", "# stub\n")
+    # 解释器自带的预编译文件：必须保留（CRD-0005，稳态启动 ≤3 秒靠它）
+    write(lib / "__pycache__" / "os.cpython-313.pyc", b"\x00pyc-stub")
     write(lib / "test" / "test_os.py", "# stub\n")
     write(lib / "idlelib" / "idle.py", "# stub\n")
     write(lib / "site-packages" / "junk.py", "# 必须被清掉\n")
@@ -750,6 +752,109 @@ try:
                 hits.append(f"{path.name}: {m.group(0)!r}")
         assert_(not hits, f"packaging\\*.py 里出现绝对路径字面量：{hits}")
     check("(i) packaging\\*.py 不含 X:\\ / C:\\Users / /home/", _no_abs_literals)
+
+    # ── T-22 代码评审：console-script 包装器 / 构建机路径 / 字节码 ──
+    def _builder_module():
+        if str(PKG) not in sys.path:
+            sys.path.insert(0, str(PKG))
+        import build_portable  # noqa: PLC0415
+        return build_portable
+
+    def _console_scripts_removed():
+        bp = _builder_module()
+        tmp = new_tmp()
+        try:
+            deps = tmp / "deps"
+            write(deps / "bin" / "yt-dlp.exe",
+                  b"#!D:\\Python313\\python.exe\\r\\nprint('stub')\\r\\n")
+            write(deps / "bin" / "ffmpeg.exe", b"MZ-stub")
+            write(deps / "fake_pkg" / "__init__.py", b"x = 1\n")
+            write(deps / "fake_pkg-1.0.dist-info" / "METADATA",
+                  b"Name: fake_pkg\nVersion: 1.0\n")
+            stage = tmp / "stage"
+            (stage / "python" / "Lib" / "site-packages").mkdir(parents=True, exist_ok=True)
+            bp.install_deps(tmp / "pyhome", stage, REPO, str(deps))
+            sp = stage / "python" / "Lib" / "site-packages"
+            assert_(not (sp / "bin").exists(),
+                    "site-packages\\bin 必须被删掉（console-script 包装器带构建机路径）")
+            hits = []
+            for path in sp.rglob("*"):
+                if not path.is_file():
+                    continue
+                if any(part.endswith(".dist-info") for part in path.parts):
+                    continue
+                blob = path.read_bytes()
+                for token in ("D:\\Python313", "C:\\Users", "/home/"):
+                    if token.encode() in blob:
+                        hits.append("%s: %s" % (path.name, token))
+            assert_(not hits, "包内残留构建机路径：%r" % hits)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    check("(j) 装依赖后删 site-packages\\bin；包内无构建机绝对路径", _console_scripts_removed)
+
+    def _stage_has_no_build_paths():
+        stage = STAGE
+        assert_(not (stage / "python" / "Lib" / "site-packages" / "bin").exists(),
+                "stage 里还有 site-packages\\bin")
+        hits = []
+        for path in stage.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(stage)
+            # 第三方/解释器自带的字符串是正常的（numpy 里也有 C:\Users）；
+            # 只扫我们自己的文件：webapp\、pipeline\、packaging\、根目录脚本与模板。
+            if rel.parts and rel.parts[0] == "python":
+                continue
+            try:
+                blob = path.read_bytes()
+            except OSError:
+                continue
+            for token in (b"D:\\Python313", b"C:\\Users", b"/home/"):
+                if token in blob:
+                    hits.append("%s: %r" % (rel.as_posix(), token))
+        assert_(not hits, "stage 内（我们自己的文件）残留构建机路径：%r" % hits)
+    check("(k) 我们自己的文件（webapp/pipeline/根/模板）不含 "
+          "D:\\Python313 / C:\\Users / /home/", _stage_has_no_build_paths)
+
+    def _pyc_scope():
+        stage = STAGE
+        assert_((stage / "python" / "Lib" / "__pycache__" / "os.cpython-313.pyc").is_file(),
+                "python\\Lib 下的 .pyc 必须保留（CRD-0005）")
+        assert_(not (stage / "pipeline" / "__pycache__").exists(),
+                "仓库代码树（pipeline\\）的 __pycache__ 不许进包")
+        assert_(not list((stage / "webapp").rglob("*.pyc")),
+                "webapp\\ 下的 .pyc 不许进包")
+    check("(m) python\\Lib 的 .pyc 保留，pipeline/webapp 的 __pycache__ 不进包",
+          _pyc_scope)
+
+    def _check_imports_sets_no_bytecode():
+        bp = _builder_module()
+        seen = []
+
+        class _Done:
+            def __init__(self, rc):
+                self.returncode = rc
+                self.stdout = ""
+                self.stderr = ""
+
+        original = bp.subprocess.run
+
+        def fake(cmd, *a, **kw):
+            seen.append(kw.get("env"))
+            return _Done(1 if "import torch" in str(cmd) else 0)
+
+        bp.subprocess.run = fake
+        try:
+            bp.check_imports(Path("dummy-stage"))
+        finally:
+            bp.subprocess.run = original
+        assert_(len(seen) == 2, "check_imports 应跑两次子进程：%r" % len(seen))
+        for env in seen:
+            assert_(env is not None and env.get("PYTHONDONTWRITEBYTECODE") == "1",
+                    "check_imports 必须带 PYTHONDONTWRITEBYTECODE=1：%r" % (env or {}).get(
+                        "PYTHONDONTWRITEBYTECODE"))
+    check("(l) check_imports 设 PYTHONDONTWRITEBYTECODE=1（不往 stage 写 .pyc）",
+          _check_imports_sets_no_bytecode)
 
 finally:
     shutil.rmtree(_TMP, ignore_errors=True)

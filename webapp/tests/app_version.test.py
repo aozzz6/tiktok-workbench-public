@@ -100,6 +100,96 @@ check("1b VERSION=9.9.9 时跟着变；VERSION 不存在时 0.0.0 且不抛异�
 check("2a 既有字段 ok/ts/api_version/features/diagnostics 不变", case_existing_fields)
 
 
+# ── 1c~1e. 安全评审：VERSION 文件不可信 ─────────────────────────────
+def _with_fake_version(content, fn):
+    """把 config.WEBAPP_DIR 指到一个临时包的 webapp/，在包根写 VERSION=content 后调 fn。"""
+    tmp = Path(tempfile.mkdtemp(prefix="t25_sec_"))
+    fake_webapp = tmp / "webapp"
+    fake_webapp.mkdir()
+    (tmp / "VERSION").write_text(content, encoding="utf-8")
+    saved = config.WEBAPP_DIR
+    try:
+        config.WEBAPP_DIR = fake_webapp
+        return fn(tmp)
+    finally:
+        config.WEBAPP_DIR = saved
+
+
+def _short(value, limit=120) -> str:
+    s = repr(value)
+    return s if len(s) <= limit else s[:limit] + "…"
+
+
+def case_reject_bad_content():
+    r"""超长 / 多行 / 带路径的 VERSION 一律 0.0.0（只认 \d+\.\d+\.\d+）。"""
+    cases = [
+        ("超长 >64 字节", "1.2.3\n" + "x" * 100),
+        ("内容含换行与路径", "1.2.3\nC:\\Users\\you\\.workbuddy\\models.json\n"),
+        ("整份就是一个路径", "C:\\Users\\you\\.workbuddy\\models.json"),
+        ("空文件", ""),
+        ("带前后垃圾", "ver 1.2.3"),
+    ]
+    for label, content in cases:
+        got = _with_fake_version(content, lambda _tmp: workbench_app.health()["version"])
+        assert_(got == "0.0.0", f"{label} 应被拒为 0.0.0，实得 {_short(got)}")
+
+
+def case_reject_symlink():
+    """VERSION 是符号链接 → 0.0.0（可被指向 models.json 这类带凭据的文件）。"""
+    tmp = Path(tempfile.mkdtemp(prefix="t25_link_"))
+    fake_webapp = tmp / "webapp"
+    fake_webapp.mkdir()
+    target = tmp / "elsewhere.txt"
+    target.write_text("9.9.9\n", encoding="utf-8")
+    link = tmp / "VERSION"
+    made = False
+    try:
+        link.symlink_to(target)
+        made = True
+    except (OSError, NotImplementedError):
+        # 本机没权限建 symlink：退而求其次，放一个**内容合法**的普通文件，
+        # 再让 is_symlink 声称它是链接 —— 这样「读到 9.9.9 就是错的」仍然成立。
+        link.write_text("9.9.9\n", encoding="utf-8")
+
+    saved = config.WEBAPP_DIR
+    real_is_symlink = Path.is_symlink
+    try:
+        config.WEBAPP_DIR = fake_webapp
+        if made:
+            got = workbench_app.health()["version"]
+            print("    （本机真建了符号链接，直接验的）")
+        else:
+            def fake_is_symlink(self):
+                return True if self == link else real_is_symlink(self)
+
+            Path.is_symlink = fake_is_symlink
+            try:
+                got = workbench_app.health()["version"]
+            finally:
+                Path.is_symlink = real_is_symlink
+            print("    （本机建不了 symlink：放了内容为 9.9.9 的普通文件 + monkeypatch is_symlink）")
+        assert_(got == "0.0.0", f"符号链接必须被拒，实得 {_short(got)}")
+    finally:
+        config.WEBAPP_DIR = saved
+        Path.is_symlink = real_is_symlink
+
+
+def case_too_long_is_not_read_whole():
+    """大文件不许整读：VERSION 有 1 MB 垃圾时也必须在毫秒级返回 0.0.0。"""
+    import time as _t
+    blob = "1.2.3\n" + ("A" * (1024 * 1024))
+    t0 = _t.perf_counter()
+    got = _with_fake_version(blob, lambda _tmp: workbench_app.health()["version"])
+    cost = _t.perf_counter() - t0
+    assert_(got == "0.0.0", f"1MB 的 VERSION 应被拒，实得 {_short(got)}")
+    assert_(cost < 0.5, f"读超长 VERSION 花了 {cost:.3f}s，像是整读了大文件")
+
+
+check("1c 坏 VERSION（超长/多行/带路径/空/带垃圾）一律 0.0.0", case_reject_bad_content)
+check("1d VERSION 是符号链接时 0.0.0", case_reject_symlink)
+check("1e 1MB 的 VERSION 不整读（只读前 64 字节）", case_too_long_is_not_read_whole)
+
+
 # ── 3. 页面：id="appVersion" + 请求 /api/health 填入 ────────────────
 def case_index_html():
     html = (WEBAPP / "static" / "index.html").read_text(encoding="utf-8")

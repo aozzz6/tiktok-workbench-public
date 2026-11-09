@@ -86,14 +86,28 @@ def health() -> dict:
     r"""健康检查 + 接口版本指纹（启动器据此判断是否需要重启，见 R6）。
 
     ★ M3（T-25）：带包根（= `webapp\` 的上一级）`VERSION` 里的版本号，页面右上角显示它。
-      读不到或读坏了给 `"0.0.0"` —— 健康检查本身绝不能因为版本文件而抛异常。
+
+    ★ 安全评审（2026-11）：`VERSION` 是**不可信文件**（包可能被解压到多用户可写目录，
+      任何本地进程都能 GET /api/health）。所以这里：
+        ① 符号链接一律给 `"0.0.0"` —— 否则它可能被换成指向 `workbuddy\models.json`
+          （里面有 LLM key）的链接，请求一次 health 就把凭据读出来了；
+        ② 只读**前 64 字节** —— 换成大文件也不会被整读、被轮询拖慢；
+        ③ 只接受 `数字.数字.数字`，其它内容（换行、路径、垃圾）一律 `"0.0.0"`。
+      任何一条不满足都给 `"0.0.0"`，健康检查本身绝不抛异常。
     """
+    version = "0.0.0"
     try:
-        _version = (config.WEBAPP_DIR.parent / "VERSION").read_text(encoding="utf-8").strip()
-    except (OSError, UnicodeError):
-        _version = ""
+        version_path = config.WEBAPP_DIR.parent / "VERSION"
+        if not version_path.is_symlink():
+            with open(version_path, "rb") as f:
+                raw = f.read(64)                       # ② 只读前 64 字节
+            text = raw.decode("utf-8").strip()
+            if re.fullmatch(r"\d+\.\d+\.\d+", text):    # ③ 只认 x.y.z
+                version = text
+    except (OSError, UnicodeError, ValueError):
+        version = "0.0.0"
     return {"ok": True, "ts": time.time(), "api_version": API_VERSION,
-            "version": _version or "0.0.0",
+            "version": version,
             "features": list(API_FEATURES), "diagnostics": config.diagnostics()}
 
 

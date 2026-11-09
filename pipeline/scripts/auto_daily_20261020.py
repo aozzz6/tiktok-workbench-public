@@ -1,9 +1,9 @@
-import json, time, subprocess, sys, urllib.request, urllib.error
+import json, os, time, subprocess, sys, urllib.request, urllib.error
 
 BASE = 'http://127.0.0.1:8787'
 LOG_PATH = r'D:/workbuddy_project/tiktok/reports/auto_20261020.log'
 SUMMARY_PATH = r'D:/workbuddy_project/tiktok/reports/auto_20261020_summary.json'
-PY_EXTRACT = r'C:\Users\Administrator\.workbuddy\binaries\python\envs\tiktok\Scripts\python.exe'
+PY_EXTRACT = os.environ.get('WB_PYTHON') or sys.executable
 PY_VERIFY = r'D:\workbuddy_project\tiktok\webapp\.venv\Scripts\python.exe'
 PIPELINE_DIR = r'D:\workbuddy_project\tiktok\pipeline'
 LEDGER_DIR = r'D:\1\duibiao'.replace('duibiao', '\u5bf9\u6807\u8d26\u53f7')

@@ -643,8 +643,25 @@ def install_deps(python_home: Path, stage: Path, repo: Path, deps_from: str | No
         source = "pip"
 
     remove_pip(target)
+    remove_console_scripts(target)
     clean_site_packages(target)
     return source
+
+
+def remove_console_scripts(site_packages: Path) -> int:
+    """Drop `site-packages\\bin\\` (pip console scripts).
+
+    `pip install --target` writes `bin\\yt-dlp.exe` (and friends) whose launcher
+    header embeds the **build machine's** interpreter path (`#!<build-python>\\python.exe`).
+    Those wrappers cannot run on a user's machine and leak a build path into the
+    ZIP; this project never calls a console script, so the directory goes.
+    """
+    bindir = site_packages / "bin"
+    if not bindir.exists():
+        return 0
+    removed = sum(1 for p in bindir.rglob("*") if p.is_file())
+    remove_path(bindir)
+    return removed
 
 
 def remove_pip(site_packages: Path) -> None:
@@ -670,13 +687,19 @@ def clean_site_packages(site_packages: Path) -> int:
 
 def check_imports(stage: Path) -> None:
     python = stage / "python" / "python.exe"
+    # Never let the check write bytecode into the stage (T-22: --skip-build ZIPs
+    # were carrying __pycache__ / *.pyc that the build never produced).
+    env = dict(os.environ)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     proc = subprocess.run([str(python), "-c", "import torch"], capture_output=True,
-                          text=True, encoding="utf-8", errors="replace", timeout=300)
+                          text=True, encoding="utf-8", errors="replace", timeout=300,
+                          env=env)
     if proc.returncode == 0:
         raise BuildError("包里能用 import torch —— 依赖里混进了 PyTorch（ADR-0002 禁止）")
     proc = subprocess.run(
         [str(python), "-c", "import fastapi, uvicorn, openpyxl, ctranslate2, faster_whisper"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
+        env=env)
     if proc.returncode != 0:
         tail = ((proc.stdout or "") + (proc.stderr or "")).strip().splitlines()[-8:]
         raise BuildError("包内依赖导不进去：" + " / ".join(tail))

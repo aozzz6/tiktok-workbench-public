@@ -2,7 +2,7 @@
 import json, subprocess, sys, io, os
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-PY = r"C:\Users\Administrator\.workbuddy\binaries\python\envs\tiktok\Scripts\python.exe"
+PY = os.environ.get("WB_PYTHON") or sys.executable
 CWD = r"D:\workbuddy_project\tiktok\pipeline"
 
 with open(os.path.join(CWD, "accounts.json"), encoding="utf-8") as f:

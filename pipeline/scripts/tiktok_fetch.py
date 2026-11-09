@@ -58,7 +58,7 @@ def find_playwright_python() -> list[str] | None:
     2026-11-04：原实现用 ``shutil.which("python"/"py"/"python3")`` 挑解释器。本机这三个
     名字全部解析到 ``WindowsApps`` 的商店占位符——文件存在、运行即报
     「Python was not found; run without arguments to install from the Microsoft Store」；
-    另有一个写死的 ``C:\\Users\\Administrator\\...\\Python314\\python.exe``，该用户目录
+    另有一个写死的绝对路径（指向某台机器上并不存在的用户目录 python.exe）。该目录
     根本不存在。所以「按文件名找到」不等于「能用」：这里逐个**实跑** ``import playwright``
     验证，并支持用 ``WB_PW_PYTHON`` 显式指定。
 

@@ -293,6 +293,8 @@ try:
         roots = [p for p in old.iterdir() if p.is_dir()]
         assert_(len(roots) == 1, "ZIP 应只有一个顶层目录：%r" % roots)
         pkg = roots[0]
+        # 老包的版本号故意写成旧值：覆盖后必须变成新 VERSION（否则断言恒真）
+        (pkg / "VERSION").write_text("0.0.0\n", encoding="utf-8")
         # 模拟用户数据（升级时绝不能丢）
         (pkg / "pipeline" / "accounts.json").write_text(
             '{"accounts": ["老账号"]}\n', encoding="utf-8")
@@ -311,6 +313,8 @@ try:
             pkg / "webapp" / "data" / "runs.jsonl",
         ]
         before = [sha256_file(p) for p in data_files]
+        assert_((pkg / "VERSION").read_text(encoding="utf-8") == "0.0.0\n",
+                "覆盖前老包的 VERSION 应是我们写的 0.0.0（否则后面断言恒真）")
         old_python_mtime = (pkg / "python" / "python.exe").stat().st_mtime
         os.utime(pkg / "python" / "python.exe", (946684800, 946684800))   # 2000-01-01
         # “把新包全部内容复制进去、选替换”：用同一份 ZIP 再解压覆盖
@@ -339,6 +343,249 @@ try:
 
 
     check(".gitignore 含 dist/（产物不入库）", _gitignore_dist)
+
+    # ── 7. 安全评审：--out 拒绝盘符根（退 2） ───────────────────
+    print("[7] --out 指向盘符根 → 退出码 2")
+
+
+    def _refuse_out_drive_root():
+        proc = run_make(["--flavor", "slim", "--skip-build",
+                         "--stage-root", str(_stage_root), "--out", "C:\\"])
+        out = proc.stdout + proc.stderr
+        assert_(proc.returncode == 2, "盘符根 --out 应退出 2，实得 %s；%r"
+                % (proc.returncode, out[-400:]))
+        assert_("--out" in out and "只允许" in out, "应说明 --out 限制：%r" % out[-400:])
+
+
+    check("--out C:\\ → 退出码 2，说明只允许哪些位置", _refuse_out_drive_root)
+
+
+    # ── 8. 安全评审：--stage-root 指向用户主目录 → 退出码 2 ─────
+    print("[8] --stage-root 指向用户主目录 → 退出码 2")
+
+
+    def _refuse_stage_root_home():
+        home = os.environ.get("USERPROFILE") or str(Path.home())
+        proc = run_make(["--flavor", "slim", "--skip-build",
+                         "--stage-root", home, "--out", str(_work / "dist_home")])
+        out = proc.stdout + proc.stderr
+        assert_(proc.returncode == 2, "主目录 --stage-root 应退出 2，实得 %s；%r"
+                % (proc.returncode, out[-400:]))
+        assert_("--stage-root" in out, "应点名 --stage-root：%r" % out[-400:])
+
+
+    check("--stage-root 指用户主目录 → 退出码 2", _refuse_stage_root_home)
+
+
+    # ── 9. 安全评审：排除表大小写不敏感 + 新增敏感名 + junction ──
+    print("[9] .ENV / Accounts.json / cc_cookie / pem / key / junction 都不进 ZIP")
+
+
+    def _case_and_links():
+        root = _work / "case"
+        stage = make_stage(root, "slim")
+        (stage / ".ENV").write_text("OPENAI_API_KEY=sk-should-not-ship-0123456789\n",
+                                    encoding="utf-8")
+        (stage / "pipeline" / "Accounts.json").write_text('{"accounts":["x"]}\n',
+                                                          encoding="utf-8")
+        (stage / "workbuddy").mkdir(parents=True, exist_ok=True)
+        (stage / "workbuddy" / "MODELS.JSON").write_text('{"api_key":"sk-x"}\n',
+                                                         encoding="utf-8")
+        (stage / "CC_COOKIE.TXT").write_text("sessionid=abc\n", encoding="utf-8")
+        (stage / "cert.PEM").write_text("-----BEGIN CERTIFICATE-----\n", encoding="utf-8")
+        (stage / "priv.KEY").write_text("-----BEGIN PRIVATE KEY-----\n", encoding="utf-8")
+        # 代码评审：仓库代码树的 __pycache__ 与 *.pyc 不进 ZIP；
+        # 但 python\Lib 下的 .pyc 是解释器的一部分，必须保留（CRD-0005）。
+        (stage / "webapp" / "__pycache__").mkdir(parents=True, exist_ok=True)
+        (stage / "webapp" / "__pycache__" / "app.cpython-313.pyc").write_bytes(b"pyc")
+        (stage / "pipeline" / "scripts").mkdir(parents=True, exist_ok=True)
+        (stage / "pipeline" / "scripts" / "orphan.pyc").write_bytes(b"pyc")
+        (stage / "python" / "Lib" / "__pycache__").mkdir(parents=True, exist_ok=True)
+        (stage / "python" / "Lib" / "__pycache__" / "os.cpython-313.pyc").write_bytes(b"pyc")
+        outside = _work / "outside_secret"
+        outside.mkdir(parents=True, exist_ok=True)
+        (outside / "leak.txt").write_text("outside-the-stage\n", encoding="utf-8")
+        junction = stage / "linked_dir"
+        made = subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+                              capture_output=True, text=True)
+        proc = run_make(["--flavor", "slim", "--skip-build",
+                         "--stage-root", str(root), "--out", str(_work / "dist_case")])
+        assert_(proc.returncode == 0, "应退出 0：%r" % (proc.stdout[-400:],))
+        zpath = _work / "dist_case" / ("tiktok-workbench-%s-slim.zip" % VERSION)
+        rels = [n.split("/", 1)[1].casefold() for n in zip_names(zpath) if "/" in n]
+        for bad in (".env", "pipeline/accounts.json", "workbuddy/models.json",
+                    "cc_cookie.txt", "cert.pem", "priv.key"):
+            assert_(bad not in rels, "排除失效：%r 进了 ZIP" % bad)
+        repo_pyc = [r for r in rels if (r.endswith(".pyc") or "__pycache__" in r)
+                    and not r.startswith("python/lib/")]
+        assert_(not repo_pyc, "仓库代码树的 *.pyc / __pycache__ 不许进 ZIP：%r" % repo_pyc[:5])
+        assert_("python/lib/__pycache__/os.cpython-313.pyc" in rels,
+                "python\\Lib 下的 .pyc 必须保留（CRD-0005）")
+        if made.returncode == 0:
+            assert_(not any(r.startswith("linked_dir") for r in rels),
+                    "junction 指向的外部文件不应进 ZIP：%r"
+                    % [r for r in rels if r.startswith("linked_dir")][:5])
+        else:
+            print("  NOTE 无法创建 junction（%r），junction 子项跳过" % (made.stderr or made.stdout))
+        assert_(not any("leak.txt" in r for r in rels), "junction 目标泄漏进 ZIP")
+
+
+    check("大小写/新增敏感名/junction 都不进 ZIP", _case_and_links)
+
+
+    # ── 10. 安全评审：stage 含凭据 → 退出码 1 并点名文件 ─────────
+    print("[10] stage 含 sk- 凭据 → 退出码 1")
+
+
+    def _secret_stage_refused():
+        root = _work / "secret"
+        stage = make_stage(root, "slim")
+        fake_key = "sk-" + ("A" * 24)
+        (stage / "webapp" / "config.py").write_text(
+            'API_KEY = "%s"\n' % fake_key, encoding="utf-8")
+        proc = run_make(["--flavor", "slim", "--skip-build",
+                         "--stage-root", str(root), "--out", str(_work / "dist_secret")])
+        out = proc.stdout + proc.stderr
+        assert_(proc.returncode == 1, "含凭据应退出 1，实得 %s；%r"
+                % (proc.returncode, out[-400:]))
+        assert_("凭据" in out, "应说明命中凭据：%r" % out[-400:])
+        assert_("config.py" in out, "应点名文件：%r" % out[-400:])
+
+
+    check("stage 含 sk- 凭据 → 退出码 1 并点名 webapp/config.py", _secret_stage_refused)
+
+
+    # ── 11. 安全评审：dist 里的源码资产计入 SHA256SUMS ──────────
+    print("[11] dist 里已有的源码资产一并写入 SHA256SUMS")
+
+
+    def _extra_assets_in_sums():
+        root = _work / "assets"
+        make_stage(root, "slim")
+        out_dir = _work / "dist_assets"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        assets = {
+            "ffmpeg-9.0.2-source.tar.xz": b"fake-source-tarball",
+            "ffmpeg-9.0.2-static-libs-sources.txt": b"lib1.c lib2.c\n",
+        }
+        for name, data in assets.items():
+            (out_dir / name).write_bytes(data)
+        proc = run_make(["--flavor", "slim", "--skip-build",
+                         "--stage-root", str(root), "--out", str(out_dir)])
+        assert_(proc.returncode == 0, "应退出 0：%r" % (proc.stdout[-400:],))
+        lines = [ln for ln in (out_dir / "SHA256SUMS.txt").read_text(encoding="ascii").splitlines()
+                 if ln.strip()]
+        assert_(len(lines) == 3, "应含 1 个 ZIP + 2 个资产：%r" % lines)
+        sums = {ln.split("  ", 1)[1]: ln.split("  ", 1)[0] for ln in lines}
+        for name in assets:
+            assert_(name in sums, "SHA256SUMS 缺资产 %r" % name)
+            assert_(sums[name] == sha256_file(out_dir / name), "资产 %r 哈希不对" % name)
+        report = json.loads((out_dir / "build-report.json").read_text(encoding="utf-8"))
+        assert_([a["name"] for a in report.get("assets", [])] == sorted(assets),
+                "build-report.assets 不对：%r" % report.get("assets"))
+
+
+    check("dist 里的 2 个源码资产计入 SHA256SUMS 与 report.assets", _extra_assets_in_sums)
+
+    # ── 12. 代码评审：--skip-build + build_portable 的旧 stage 不一致 → 退 2 ──
+    print("[12] --skip-build 复用旧 stage 前做仓库↔stage 比对")
+
+
+    def _stale_stage_refused():
+        root = _work / "stale"
+        stage = make_stage(root, "slim")
+        # marker 伪装成 build_portable 产出：这时必须逐文件比对，不一致就退 2
+        (stage / ".build-portable-stage").write_text(
+            "built by packaging/build_portable.py for tiktok-workbench %s (slim); safe\n"
+            % VERSION, encoding="utf-8")
+        (stage / "webapp" / "app.py").write_text("# 和仓库不一样\n", encoding="utf-8")
+        proc = run_make(["--flavor", "slim", "--skip-build",
+                         "--stage-root", str(root), "--out", str(_work / "dist_stale")])
+        out = proc.stdout + proc.stderr
+        assert_(proc.returncode == 2, "旧 stage 不一致应退 2，实得 %s；%r"
+                % (proc.returncode, out[-500:]))
+        assert_("不一致" in out and "重跑" in out, "应说明不一致并要求重建：%r" % out[-500:])
+
+
+    check("--skip-build 且 build_portable stage 与仓库不一致 → 退出码 2", _stale_stage_refused)
+
+
+    # ── 13. 代码评审：默认重建（只有 --skip-build 才复用） ────────
+    print("[13] 默认调用 build_portable 重建（不是静默复用旧 stage）")
+
+
+    def _default_rebuilds():
+        root = _work / "default"
+        make_stage(root, "slim")
+        out = _work / "dist_default"
+        # 不给 --python-home/--ffmpeg-dir：重建会失败，但必须"尝过重建"，
+        # 而不是把旧 stage 直接打包成功。
+        proc = run_make(["--flavor", "slim", "--stage-root", str(root), "--out", str(out)])
+        text = proc.stdout + proc.stderr
+        assert_("默认重建" in text, "默认应打印'默认重建'：%r" % text[-500:])
+        assert_(proc.returncode != 0, "缺构建输入时默认重建应失败，实得 0")
+        zips = list(out.glob("*.zip")) if out.exists() else []
+        assert_(not zips, "重建失败后不许产出旧 stage 的 ZIP：%r" % zips)
+
+
+    check("默认一律重建；构建失败时不产出 ZIP（不会静默复用旧 stage）", _default_rebuilds)
+
+
+    # ── 14. 代码评审：单 flavor 不覆盖另一个包 ───────────────────
+    print("[14] --flavor slim 再跑一次不抹掉 full 的校验和/报告条目")
+
+
+    def _single_flavor_keeps_other():
+        root = _work / "merge"
+        make_stage(root, "full")
+        make_stage(root, "slim")
+        out = _work / "dist_merge"
+        first = run_make(["--flavor", "both", "--skip-build",
+                          "--stage-root", str(root), "--out", str(out)])
+        assert_(first.returncode == 0, "both 应成功：%r" % (first.stdout[-400:],))
+        full_zip = out / ("tiktok-workbench-%s-full.zip" % VERSION)
+        full_sha = sha256_file(full_zip)
+        second = run_make(["--flavor", "slim", "--skip-build",
+                           "--stage-root", str(root), "--out", str(out)])
+        assert_(second.returncode == 0, "单 flavor 应成功：%r" % (second.stdout[-400:],))
+        lines = [ln for ln in (out / "SHA256SUMS.txt").read_text(encoding="ascii").splitlines()
+                 if ln.strip()]
+        assert_(len(lines) == 2, "单 flavor 跑完仍应保留 2 行：%r" % lines)
+        assert_(("%s  %s" % (full_sha, full_zip.name)) in lines, "full 的校验和被抹掉了")
+        report = json.loads((out / "build-report.json").read_text(encoding="utf-8"))
+        assert_(sorted(f["flavor"] for f in report["flavors"]) == ["full", "slim"],
+                "report 丢了另一个包：%r" % [f["flavor"] for f in report["flavors"]])
+        assert_("保留另一个包" in second.stdout + second.stderr,
+                "应打印保留了另一个包：%r" % second.stdout[-400:])
+
+
+    check("--flavor slim 不抹掉 full 的 SHA256SUMS 行与 report 条目", _single_flavor_keeps_other)
+
+
+    # ── 15. 代码评审：dist 锁（两个进程同时打包会互踩） ──────────
+    print("[15] dist 有锁时第二个进程退 2")
+
+
+    def _lock_blocks_second_run():
+        root = _work / "locked"
+        make_stage(root, "slim")
+        out = _work / "dist_locked"
+        out.mkdir(parents=True, exist_ok=True)
+        lock = out / ".make_zips.lock"
+        lock.write_text("12345", encoding="ascii")
+        try:
+            proc = run_make(["--flavor", "slim", "--skip-build",
+                             "--stage-root", str(root), "--out", str(out)])
+            text = proc.stdout + proc.stderr
+            assert_(proc.returncode == 2, "有锁应退 2，实得 %s；%r"
+                    % (proc.returncode, text[-400:]))
+            assert_("另一个 make_zips" in text, "应说明锁被占用：%r" % text[-400:])
+            assert_(not list(out.glob("*.zip")), "有锁时不应写任何 ZIP")
+        finally:
+            lock.unlink(missing_ok=True)
+
+
+    check("dist 里有 .make_zips.lock → 第二个进程退 2 且不写 ZIP", _lock_blocks_second_run)
 finally:
     shutil.rmtree(_work, ignore_errors=True)
 

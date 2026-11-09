@@ -98,19 +98,22 @@ def case_version():
 
 # ─────────────────────────── 3. 三个已知限制 ───────────────────────────
 def case_limit_no_ytdlp():
-    """① 粘贴链接不下载的真因是「只认 WB_YTDLP」，**不是**「包里没有 yt-dlp」。"""
+    """① 粘贴链接**就是不可用**；不许再说「其实带了 yt-dlp」或让用户去设 WB_YTDLP。"""
     assert_("yt-dlp" in TEXT, "限制①没写 yt-dlp")
-    assert_("WB_YTDLP" in TEXT, "限制①没写真实原因：工作台只认 WB_YTDLP 这个环境变量")
     assert_("链接" in TEXT, "限制①没写「粘贴链接」这件事")
     assert_("本地视频" in TEXT, "限制①没写明请先把视频下到本地")
-    assert_("没有随包" not in TEXT or "yt-dlp" not in TEXT.split("没有随包")[0][-200:],
-            "限制①还在说「yt-dlp 没有随包」——包里其实带了 yt-dlp（requirements-portable.txt）")
+    assert_("其实带了" not in TEXT, "限制①还在说「其实带了 yt-dlp」（它跑不起来，不是「带了就能用」）")
+    assert_("WB_YTDLP" not in TEXT, "限制①还在教用户去看 WB_YTDLP 这种内部设置")
+    assert_(has_any("不支持", "还不支持", "不会下载"), "限制①没明确写「不支持/不会下载」")
 
 
 def case_limit_ai_online():
     assert_(has_any("API key", "API Key", "api key"), "限制②没写 API key")
     assert_("联网" in TEXT, "限制②没写必须联网")
     assert_("models.json" in TEXT, "限制②没写 workbuddy\\models.json")
+    # 2026-11-09（文档评审）：不许教用户手写 JSON，页面「AI 接入」才是指定动作
+    assert_("AI 接入" in TEXT, "限制②没指到「AI 接入」页面")
+    assert_("新增模型" in TEXT, "限制②没写「＋ 新增模型」这一步")
 
 
 def case_limit_proxy():
@@ -120,8 +123,71 @@ def case_limit_proxy():
     assert_("可以完全离线" not in TEXT, "限制③还在说「可以完全离线」——反推/翻译/对话都要联网")
     assert_("离线可用" in TEXT, "限制③应分两栏写：离线可用 / 需要联网")
     assert_("需要联网" in TEXT, "限制③没写哪些功能必须联网")
-    online_part = TEXT.split("需要联网", 1)[1][:80] if "需要联网" in TEXT else ""
+    online_part = TEXT.split("需要联网", 1)[1][:120] if "需要联网" in TEXT else ""
     assert_("反推" in online_part, f"「需要联网」那一栏里没有反推：{online_part!r}")
+    # 2026-11-09（文档评审）：全站没有代理输入框，只有 WB_PROXY
+    assert_("WB_PROXY" in TEXT, "限制③没写 WB_PROXY（要固定代理只能这么设）")
+    assert_("系统代理" in TEXT, "限制③没写「工作台会自动用系统代理」")
+    assert_("账号设置" not in TEXT or "代理" not in TEXT.split("账号设置", 1)[1][:40],
+            "限制③还在说「在账号设置里填代理」——没有这个输入框")
+
+
+# ─────────────────────────── 3b. 文档评审（2026-11-09）的 5 条 blocking ───────────────────────────
+def case_zip_wrapper_dir():
+    """ZIP 顶层有一层 tiktok-workbench-<版本>-full/，升级时要进到那一层再复制。"""
+    assert_("tiktok-workbench-" in TEXT, "没写 ZIP 里那层外壳目录的名字")
+    assert_(has_any("外壳", "这一层", "那一层", "双击进去"), "没说清「解压后多一层、要进去」")
+    upgrade = TEXT.split("## 五", 1)[1] if "## 五" in TEXT else ""
+    assert_("tiktok-workbench-" in upgrade, "§五 升级没提「进入 tiktok-workbench-… 这一层」")
+    assert_(has_any("进入", "双击进去"), "§五 没写「进入这一层」")
+
+
+def case_no_task_manager():
+    assert_("任务管理器" not in TEXT, "还在教用户用任务管理器结束 Python 进程（常驻的是 pythonw.exe，会误杀）")
+    assert_("重启电脑" in TEXT, "没给「要彻底停就重启电脑」这条")
+
+
+def case_backup_lists_accounts():
+    sec5 = TEXT.split("## 五", 1)[1] if "## 五" in TEXT else ""
+    sec6 = TEXT.split("## 六", 1)[1] if "## 六" in TEXT else ""
+    for body, where in ((sec5, "§五「不要删」"), (sec6, "§六「只备份主要数据」")):
+        assert_("accounts.json" in body and "pipeline" in body,
+                f"{where}清单里没有 pipeline 里的 accounts.json（账号清单）")
+        for needle in ("pipeline\\reports", "reverse"):
+            assert_(needle in body, f"{where}清单里没有 {needle}")
+
+
+def case_ports_include_8787():
+    assert_("8787" in TEXT, "端口候选里没写 8787（_launch.py 的最后一个候选）")
+
+
+def case_version_on_page():
+    assert_("右上角" in TEXT, "§八 没写「页面右上角也显示同一个版本号」")
+
+
+def case_checkenv_description():
+    for needle in ("代理", "台账", "cookie"):
+        assert_(needle in TEXT, f"§四 检查环境 的描述里没提 {needle}")
+    assert_("WARN" in TEXT, "没写 WARN 是提醒不是错误")
+
+
+def case_ledger_origin():
+    assert_("首次" in TEXT and "台账" in TEXT, "没写台账从哪来（首次自动建模板）")
+    assert_("ledger" in TEXT, "没写旧台账放进 ledger\\ 再重启")
+
+
+def case_windows11_properties():
+    assert_("显示更多选项" in TEXT, "§一 没写 Win11 右键要先点「显示更多选项」")
+
+
+def case_extract_time():
+    assert_("2~3 分钟" in TEXT or "2-3 分钟" in TEXT, "§二 没写解压大约 2~3 分钟")
+
+
+def case_offline_frames():
+    offline = TEXT.split("离线可用", 1)[1][:120] if "离线可用" in TEXT else ""
+    assert_("抽帧" in offline or "导入本地视频" in offline,
+            f"「离线可用」那一栏没写「导入本地视频 + 抽帧」：{offline!r}")
 
 
 # ─────────────────────────── 4. 常见故障 ≥5 条 ───────────────────────────
@@ -167,6 +233,7 @@ CODE_RE = re.compile(r"`([^`\n]+)`")
 LOCAL_ONLY = {
     "_setenv.local.bat": "用户自建的本地覆盖文件（可选），包里没有",
     "workbuddy\\models.json": "用户自己填 API key 的文件，首次用 AI 功能后才出现",
+    "pipeline\\accounts.json": "首次运行/加账号后才生成（包里带的是 accounts.example.json）",
 }
 # 启动后才生成的日志：只查目录
 DIR_ONLY = {"logs\\_server_run.log": "logs"}
@@ -216,9 +283,24 @@ check("日志在 logs\\_server_run.log", case_log_location)
 check("版本号看根目录 VERSION", case_version)
 
 print("[3] 三个已知限制")
-check("① 粘贴 TikTok 链接不可用（无 yt-dlp），只能用本地视频", case_limit_no_ytdlp)
-check("② AI 翻译/对话要联网 + 自己填 API key（workbuddy\\models.json）", case_limit_ai_online)
-check("③ 采集 TikTok 要你自己的代理；台账/对标/反推/转写可离线", case_limit_proxy)
+check("① 粘贴链接就是不可用（不说「其实带了 yt-dlp」、不教 WB_YTDLP），请用本地视频", case_limit_no_ytdlp)
+check("② AI 翻译/对话要联网 + 走页面「AI 接入 → ＋ 新增模型」填 key", case_limit_ai_online)
+check("③ 采集要代理（WB_PROXY/系统代理）；离线可用 vs 需要联网分栏，反推在联网栏",
+      case_limit_proxy)
+
+print("[3b] 文档评审 2026-11-09 的 blocking")
+check("ZIP 有一层外壳目录 tiktok-workbench-<版本>-…，§二 说明、§五 要求进这一层再复制",
+      case_zip_wrapper_dir)
+check("不再教用户用任务管理器；彻底停 = 重启电脑 / 重启工作台.bat", case_no_task_manager)
+check("备份与「不要删」两处都含 pipeline\\accounts.json / pipeline\\reports / reverse",
+      case_backup_lists_accounts)
+check("端口候选含 8787", case_ports_include_8787)
+check("§八 写了页面右上角也显示同一个版本号", case_version_on_page)
+check("§四 检查环境的描述列了 代理/台账/cookie，并说明 WARN 不是错误", case_checkenv_description)
+check("§四 写了台账从哪来（首次自动建模板 / 旧台账放进 ledger\\ 重启生效）", case_ledger_origin)
+check("§一 写了 Win11 右键先点「显示更多选项」", case_windows11_properties)
+check("§二 写了解压约 2~3 分钟", case_extract_time)
+check("离线栏里含「导入本地视频 / 抽帧」", case_offline_frames)
 
 print("[4] 常见故障 ≥5 条")
 check("杀软拦 python.exe / 端口被占 / 模型下载失败(HF_ENDPOINT) / 缺 VC 运行库 / 中文·空格路径",

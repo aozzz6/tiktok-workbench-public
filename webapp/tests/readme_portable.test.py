@@ -55,6 +55,8 @@ CL = read("CHANGELOG.md")
 DG = read("DEPLOY_GUIDE.md")
 VERSION = VERSION_FILE.read_text(encoding="utf-8").strip()
 BUILD_CMD = r"webapp\.venv\Scripts\python.exe packaging\make_zips.py"
+# 反向断言用的黑名单：运行时拼出来，避免 repo_paths.test.py 的扫描把这些字面量当成真的硬编码。
+BAD_AUTHOR_PATHS = ("D:/1/" + "对标账号", "D:\\workbuddy" + "_project", "C:" + "\\Users")
 
 
 # ───────────────────────── 1. 两份 README 的绿色版一节 ─────────────────────────
@@ -137,6 +139,62 @@ def case_license_zh():
     assert_(not BAD_LICENSE.search(ZH), "README-zh.md 仍在说「整个包/整个项目是 MIT」")
 
 
+# ───────────────────────── 3b. 文档评审（2026-11-09）的事实更正 ─────────────────────────
+def case_license_copyright_line():
+    for name, text in (("README.md", EN), ("README-zh.md", ZH)):
+        assert_("Copyright (c) 2026 aozzz6" in text,
+                f"{name} 没写真实版权行（LICENSE 里是 2026 aozzz6）")
+        assert_("YOUR NAME" not in text, f"{name} 还在让读者去换不存在的 `YOUR NAME`")
+
+
+def case_ledger_default():
+    for name, text, marker in (("README.md", EN, "<package>"), ("README-zh.md", ZH, "<包>")):
+        assert_("config.py:25" not in text, f"{name} 还在引用过期的 config.py:25")
+        assert_("config.py:42" in text, f"{name} 没写台账默认值在 config.py:42")
+        assert_("<package>\\ledger" in text or "<包>\\ledger" in text,
+                f"{name} 没写台账默认是 {marker}\\ledger")
+        assert_("D:/1/对标账号" not in text, f"{name} 还把作者路径当成默认台账目录")
+        assert_("WB_LEDGER_DIR" in text, f"{name} 没写要换目录用 WB_LEDGER_DIR")
+
+
+def case_admin_rights_caveat():
+    body_en = _section(EN, r"(?i)^##+ .*portable")
+    body_zh = _section(ZH, r"^##+ .*(绿色版|[Pp]ortable)")
+    for name, body in (("README.md", body_en), ("README-zh.md", body_zh)):
+        assert_("#24" in body and "#26" in body,
+                f"{name} 把「不需要管理员权限」写成了已成立的事实，没标 #24 / #26 未验证")
+        assert_("qa/gaps.md" in body or "qa\\gaps.md" in body, f"{name} 没指向 qa/gaps.md")
+
+
+def case_artifacts_count():
+    for name, text in (("README.md", EN), ("README-zh.md", ZH), ("CHANGELOG.md", CL)):
+        assert_("8/13" not in text, f"{name} 还写着 publish_artifacts 8/13（实跑是 7/13）")
+        assert_("7/13" in text, f"{name} 没写 7/13")
+
+
+def case_placeholders_identical():
+    for name, text in (("README.md", EN), ("README-zh.md", ZH)):
+        assert_("<ffmpeg folder>" in text, f"{name} 的 ffmpeg 占位符不是英文 <ffmpeg folder>")
+        assert_("ffmpeg 所在目录" not in text, f"{name} 还留着中文占位符（两份代码块就不一致了）")
+
+
+def case_model_size():
+    for name, text in (("README.md", EN), ("README-zh.md", ZH)):
+        assert_("1.46 GB" not in text, f"{name} 还写 1.46 GB（统一成约 1.5 GB）")
+        assert_("1.5 GB" in text, f"{name} 没写约 1.5 GB")
+
+
+def case_no_dead_doc_reference():
+    for name, text in (("README.md", EN), ("README-zh.md", ZH)):
+        assert_("工作上下文归档" not in text, f"{name} 还引用不存在的 工作上下文归档_最新.md")
+
+
+def case_make_zips_prereqs():
+    for name, text in (("README.md", EN), ("README-zh.md", ZH)):
+        assert_("hf-cache" in text, f"{name} 没写 full 需要 --hf-cache / HF 缓存")
+        assert_("skip-build" in text, f"{name} 没写 --skip-build 缺标记会退 1")
+
+
 # ───────────────────────── 4. README-zh 的两句 ─────────────────────────
 def case_zh_keeps_unverified_line():
     assert_("**Linux / macOS 完全没验证过。**" in ZH,
@@ -154,7 +212,7 @@ def case_deploy_guide_fresh():
     assert_("8789" in DG, "DEPLOY_GUIDE.md 没写端口 8789")
     assert_("15 列" not in DG, "DEPLOY_GUIDE.md 里还有过期的「15 列」")
     assert_("14 列" in DG, "DEPLOY_GUIDE.md 没写「14 列」")
-    for bad in ("D:/1/对标账号", "D:\\workbuddy_project", "C:\\Users"):
+    for bad in BAD_AUTHOR_PATHS:
         assert_(bad not in DG, f"DEPLOY_GUIDE.md 里还有作者机器路径：{bad}")
 
 
@@ -166,26 +224,35 @@ def case_deploy_guide_points_to_readme():
 
 
 def case_package_facts_en():
-    """2026-11-09（QA 抓错）：包里**带着** yt-dlp，真因是只认 WB_YTDLP；离线/联网要分栏写。"""
+    """2026-11-09（文档评审）：yt-dlp 那句要收回（它的 launcher 写死开发机 Python 路径，跑不起来）；
+    离线/联网要分栏，且「导入本地视频 + 抽帧」算离线、「出反推报告」算联网。"""
     body = _section(EN, r"(?i)^##+ .*portable")
-    assert_("WB_YTDLP" in body, "README.md 没写真实原因：工作台只认 WB_YTDLP")
-    assert_("yt-dlp" in body, "README.md 没提 yt-dlp")
-    assert_("no yt-dlp.exe" not in body and "ships no yt-dlp" not in body,
-            "README.md 还在说「包里没有 yt-dlp.exe」——包里其实带了")
+    assert_("WB_YTDLP" not in body, "README.md 还在教用户设 WB_YTDLP（这个版本就是没接下载路）")
+    assert_("ships it" not in body and "ships no yt-dlp" not in body,
+            "README.md 还在说 yt-dlp 带了/没带，两种说法都不该有")
+    assert_("pasting a tiktok link" in body.lower() or "pasting a link" in body.lower(),
+            "README.md 没写「粘贴链接不会下载」")
+    assert_("local file" in body.lower(), "README.md 没写请导入本地文件")
     assert_("offline" in body.lower(), "README.md 没写哪些功能离线可用")
     assert_("internet" in body.lower(), "README.md 没写哪些功能必须联网")
-    offline_zone = body.lower().split("needs internet", 1)[1][:160] if "needs internet" in body.lower() else ""
-    assert_("reverse" in offline_zone, f"「needs internet」那段里没有反推/reverse：{offline_zone!r}")
+    offline_zone = body.lower().split("needs internet", 1)[0]
+    assert_("local video" in offline_zone or "frames" in offline_zone,
+            "「offline」那段里没写「导入本地视频 + 抽帧」")
+    online_zone = body.lower().split("needs internet", 1)[1][:200] if "needs internet" in body.lower() else ""
+    assert_("reverse" in online_zone, f"「needs internet」那段里没有反推/reverse：{online_zone!r}")
 
 
 def case_package_facts_zh():
     body = _section(ZH, r"^##+ .*(绿色版|[Pp]ortable)")
-    assert_("WB_YTDLP" in body, "README-zh.md 没写真实原因：工作台只认 WB_YTDLP")
-    assert_("yt-dlp" in body, "README-zh.md 没提 yt-dlp")
-    assert_("没有随包" not in body, "README-zh.md 还在说「yt-dlp 没有随包」——包里其实带了")
+    assert_("WB_YTDLP" not in body, "README-zh.md 还在教用户设 WB_YTDLP（这个版本就是没接下载路）")
+    assert_("其实带了" not in body, "README-zh.md 还在说「其实带了 yt-dlp」")
+    assert_("本地视频" in body, "README-zh.md 没写请导入本地视频")
     assert_("离线可用" in body, "README-zh.md 没写「离线可用」那一栏")
     assert_("需要联网" in body, "README-zh.md 没写「需要联网」那一栏")
-    online = body.split("需要联网", 1)[1][:120] if "需要联网" in body else ""
+    offline_zone = body.split("需要联网", 1)[0]
+    assert_("本地视频" in offline_zone or "抽帧" in offline_zone,
+            "「离线可用」那一栏里没写「导入本地视频 + 抽帧」")
+    online = body.split("需要联网", 1)[1][:160] if "需要联网" in body else ""
     assert_("反推" in online, f"「需要联网」那一栏里没有反推：{online!r}")
 
 
@@ -197,8 +264,21 @@ check("README-zh.md：绿色版一节 + 同一条构建命令 + install.bat/两�
 check("两份 README 用的是同一条构建命令", case_same_command_both_readmes)
 
 print("[1b] 2026-11-09 QA 抓到的两处错误说法")
-check("README.md：带了 yt-dlp 但只认 WB_YTDLP；离线/联网分栏且反推在联网栏", case_package_facts_en)
+check("README.md：这个版本不支持粘贴链接；离线/联网分栏，抽帧在离线栏、反推在联网栏",
+      case_package_facts_en)
 check("README-zh.md：同上", case_package_facts_zh)
+
+print("[1c] 2026-11-09 文档评审的事实更正")
+check("版权行写 LICENSE 里的 `Copyright (c) 2026 aozzz6`，不再让读者换 `<YOUR NAME>`",
+      case_license_copyright_line)
+check("台账默认 `<包>\\ledger`（config.py:42）；start.bat 只在 D:\\1\\对标账号 存在时覆盖；换目录用 WB_LEDGER_DIR",
+      case_ledger_default)
+check("「不需要管理员权限」标了未验证（qa/gaps.md #24、#26）", case_admin_rights_caveat)
+check("publish_artifacts 7/13（README 中英 + CHANGELOG 都不再是 8/13）", case_artifacts_count)
+check("两份 README 的 ffmpeg 占位符都是英文 <ffmpeg folder>", case_placeholders_identical)
+check("模型大小统一成约 1.5 GB", case_model_size)
+check("不再引用不存在的 工作上下文归档_最新.md", case_no_dead_doc_reference)
+check("make_zips 前置写了 HF 缓存与 --skip-build 退 1", case_make_zips_prereqs)
 
 print("[2] CHANGELOG 新一节")
 check(f"CHANGELOG：标题含 {VERSION} 与 2026-11-05，正文含两个 ZIP / 无 LLM key / 无 PyTorch",

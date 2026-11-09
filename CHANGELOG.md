@@ -65,7 +65,7 @@ Entries carry the date; since `0.1.0` they also carry the `VERSION` number.
   already running; a true cold start from another working directory was not performed
   (`qa/gaps.md` #20).
 - `qa/run-all.ps1` stays red in this repository because `qa/T-04` pins a commit that is not in
-  this history and `test_publish_artifacts.py` is 8/13; see `qa/gaps.md` #21.
+  this history and `test_publish_artifacts.py` is 7/13; see `qa/gaps.md` #21.
 
 ## 2026-11-04 — A deploy checklist for the next machine
 

@@ -29,11 +29,12 @@
 | `pipeline/` | 采集流水线：抓取 → 下载音频 → 转写 → 翻译 → 写台账。都是普通 Python 脚本，多数能单独跑；例外是 `daily_batch.py`，见下文。 |
 | `pipeline/output/` | 采集产物：`scrape_<账号>.json`、`<账号>_audio/`、转写文本。不进 git。 |
 | `qa/` | 本次改动的验收用例（`qa/T-*`），加上总跑脚本 `qa/run-all.ps1` 与缺口清单 `qa/gaps.md`。 |
-| `reverse/` | 逆向分析的临时空间。只有 `reverse/<视频ID>/` 与 `reverse/_uploads/` 不进 git，目录本身是跟踪的。 |
+| `reverse/` | 逆向分析的临时空间。**不进 git** —— 第一次启动时由程序创建。 |
 
-**Excel 台账是对标分析的唯一真相源**（14 列，一个账号一个 sheet）。它在仓库之外。它的路径是
+**Excel 台账是对标分析的唯一真相源**（14 列，一个账号一个 sheet）。它的路径是
 `pipeline/accounts.json` 的 `xlsx` 字段；没配或指向的文件不存在时，看板会回退到 `LEDGER_DIR`
-（`webapp/config.py:25`，默认 `D:/1/对标账号`）里最新改动的那个 `.xlsx`。
+（`webapp/config.py:42`，默认 `<包>\ledger`）里最新改动的那个 `.xlsx`。`start.bat` 只在存在
+`D:\1\对标账号` 时才覆盖这个默认值（那是作者自己的目录）；要放到别处，就设 `WB_LEDGER_DIR`。
 
 **台账文件必须放在 `LEDGER_DIR` 里面。** `config.ledger_path()` 只在那里找 —— 放在别处的 `.xlsx`
 会被**静默**忽略、当成没有台账。要把台账放到别的目录，就把 `WB_LEDGER_DIR` 指过去。
@@ -85,20 +86,24 @@ pipeline\.venv\Scripts\python.exe -m pip install -r pipeline\requirements.txt
 
 ## 绿色版（Portable，给没有 Python 的使用者）
 
-`dist\` 下那两个 ZIP 就是给使用者的成品：解压、双击，不用装任何东西，也不需要管理员权限。
+`dist\` 下那两个 ZIP 就是给使用者的成品：解压、双击，不用装任何东西，**设计上**也不需要管理员权限
+（这个目标**还没在干净机器 / 标准账户上验证过**，见 `qa/gaps.md` #24 与 #26）。
 使用者说明书随包带——源文件是 `packaging\templates\使用说明.md`，构建时会复制成包根目录的 `使用说明.md`。
 
-在开发机上一条命令出两个包：
+在开发机上一条命令出两个包。两个前置：构建要能找得到 **ffmpeg**；**full** 那一份还需要本机
+已经有转写模型的 Hugging Face 缓存（`--hf-cache`，或 `HF_HUB_CACHE` / `HF_HOME` /
+`XDG_CACHE_HOME` / `~\.cache\huggingface\hub`）。没有缓存就先只出 `--flavor slim`。
 
 ```bat
 rem 只需一次：让构建找得到 ffmpeg —— 把 ffmpeg.exe + ffprobe.exe 放进 pipeline\ffmpeg_bin\，
-rem 或者设 WB_FFMPEG_DIR，或者给下面这条命令加 --ffmpeg-dir "<ffmpeg 所在目录>"
+rem 或者设 WB_FFMPEG_DIR，或者给下面这条命令加 --ffmpeg-dir "<ffmpeg folder>"
 webapp\.venv\Scripts\python.exe packaging\make_zips.py
 ```
 
-产物：`dist\tiktok-workbench-<VERSION>-full.zip`（带约 1.46 GB 模型，转写可离线）、
-`-slim.zip`（不带模型，首次转写会下载约 1.46 GB）、`SHA256SUMS.txt`、`build-report.json`。
-只出小包用 `--flavor slim`；不想重构建、直接拿 `build\portable\` 里现成 stage 打包用 `--skip-build`。
+产物：`dist\tiktok-workbench-<VERSION>-full.zip`（带约 1.5 GB 模型，转写可离线）、
+`-slim.zip`（不带模型，首次转写会下载约 1.5 GB）、`SHA256SUMS.txt`、`build-report.json`。
+只出小包用 `--flavor slim`。不想重构建、直接拿 `build\portable\` 里现成 stage 打包用 `--skip-build`
+——但它缺构建标记时会退出 1，所以至少得真构建过一次。
 
 **开发者检出流程不变：仍然是两个 venv + `install.bat`。**
 绿色版只是多出来的一份产物——它不替代 `webapp\.venv`、`pipeline\.venv` 和 `webapp\install.bat`，
@@ -108,7 +113,7 @@ packaging 目录的测试——一个方面一个脚本，各打印 `通过 N / 
 所以先构建一次 slim：
 
 ```bat
-webapp\.venv\Scripts\python.exe packaging\build_portable.py --flavor slim --ffmpeg-dir "<ffmpeg 所在目录>"
+webapp\.venv\Scripts\python.exe packaging\build_portable.py --flavor slim --ffmpeg-dir "<ffmpeg folder>"
 for %f in (packaging\tests\*.test.py) do @(webapp\.venv\Scripts\python.exe "%f" || exit /b 1)
 ```
 
@@ -117,15 +122,16 @@ for %f in (packaging\tests\*.test.py) do @(webapp\.venv\Scripts\python.exe "%f" 
 
 包里能做什么、不能做什么，照实写：
 
-- **离线可用**：看台账、对标分析、转写（完整包连模型都随包带着；转写走 CPU int8，
-  GPU 路线存在但未验证，见 `qa/gaps.md`）。
-- **需要联网 + 你自己的 API key**（填在 `workbuddy\models.json`）：AI 翻译、AI 对话、**反推**。
-  反推要调用远程的「视觉模型」看画面，所以**它不能离线**。
-- **粘贴 TikTok 链接不会下载**——**不是**因为包里没有 yt-dlp：包里其实带了
-  （`python\Lib\site-packages\bin\yt-dlp.exe`，来自 `pipeline\requirements-portable.txt` 的
-  `yt-dlp==2026.8.19`）。工作台只读 `WB_YTDLP` 这个环境变量，而它的默认值是开发机路径，
-  所以现在这条下载路没有接上包里那份。请自己把视频下到本地，再导入**本地视频**。
-- **采集 TikTok 要你自己的代理。**
+- **离线可用**：**导入本地视频 + 抽帧**、看台账、对标分析、转写（完整包连模型都随包带着；
+  转写走 CPU int8，GPU 路线存在但未验证，见 `qa/gaps.md`）。
+- **需要联网 + 你自己的 API key**（在页面「AI 接入 → ＋ 新增模型」里填，页面会自己写
+  `workbuddy\models.json`）：AI 翻译、AI 对话、**出反推报告**。反推报告要调用远程的
+  「视觉模型」看画面，所以**它不能离线**。
+- **粘贴 TikTok 链接在这个版本里不会下载**：包里那个下载组件写死了开发机的 Python 路径，
+  普通电脑上跑不起来，所以这个功能没有启用。请自己把视频下载到本地，再导入**本地视频**。
+- **采集 TikTok 要你自己的代理**：工作台会复用系统代理，或自动找常见的本地代理端口
+  （7892 / 7897 / 10809 …）；要固定一个，就在 `_setenv.local.bat` 里写
+  `set WB_PROXY=http://127.0.0.1:7897`（做法见使用者说明书）。
 
 ## 启动看板
 
@@ -221,7 +227,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File qa\run-all.ps1
 总跑脚本会遍历 `qa\` 下每个目录，按 `run.ps1` / `check.ps1` / `run.py` / `run.sh` 的顺序找入口并执行。
 某个目录没有入口文件时会报 `[WARN] … 不算通过`，整轮以非 0 退出 —— 「没有用例」永远不算通过。
 
-> **基线说明：** `qa\run-all.ps1` 在本仓库恒红（`qa\T-04` 钉了不在历史里的提交、`publish_artifacts` 8/13，见 `qa\gaps.md` #21），所以本仓库不拿 run-all 全绿当基线 —— 请按你要改的部分跑对应的 `qa\T-*` 用例。
+> **基线说明：** `qa\run-all.ps1` 在本仓库恒红（`qa\T-04` 钉了不在历史里的提交、`publish_artifacts` 7/13，见 `qa\gaps.md` #21），所以本仓库不拿 run-all 全绿当基线 —— 请按你要改的部分跑对应的 `qa\T-*` 用例。
 
 ## 有意不进 git 的东西
 
@@ -246,10 +252,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File qa\run-all.ps1
 
    ```json
    {"accounts": [{"account": "<账号名>", "lang": "en", "active": true}],
-    "xlsx": "D:/1/对标账号/<你的台账>.xlsx"}
+    "xlsx": "<包>/ledger/<你的台账>.xlsx"}
    ```
 
-   这个 `.xlsx` **必须落在 `LEDGER_DIR` 里**（默认 `D:/1/对标账号`）—— 见上一节那段说明。
+   这个 `.xlsx` **必须落在 `LEDGER_DIR` 里**（默认 `<包>\ledger`）—— 见上一节那段说明。
    也可以用 `webapp/config.py` 的 `add_account()`，或在界面上点「＋ 新增账号」。
 2. Excel 台账本身，放在 `LEDGER_DIR` 里（或 `WB_LEDGER_DIR` 指过去的那个目录）。
 
@@ -301,7 +307,7 @@ pipeline\.venv\Scripts\python.exe -m pip install -r pipeline\requirements.txt
 ### 七个环境变量
 
 `webapp/config.py` 读 `WB_PIPELINE_DIR`（`:20`）、`WB_PYTHON`（`:21`）、
-`WB_HOME`（`:22`）、`WB_PROXY`（`:23`）、`WB_LEDGER_DIR`（`:25`）；
+`WB_HOME`（`:22`）、`WB_PROXY`（`:40`）、`WB_LEDGER_DIR`（`:42`）；
 `webapp/tk_reverse.py` 读 `WB_REVERSE_DIR`（`:47`）和 `WB_YTDLP`（`:50-52`）。
 起看板前在命令行（或 `start.bat` 里）设好。
 
@@ -310,7 +316,7 @@ pipeline\.venv\Scripts\python.exe -m pip install -r pipeline\requirements.txt
 | `WB_PIPELINE_DIR` | 你的 `pipeline` 目录（缺省是作者的） |
 | `WB_PYTHON` | 跑流水线的解释器（缺省是 `WB_PIPELINE_DIR` 下的 `pipeline\.venv`） |
 | `WB_HOME` | 你的 WorkBuddy 用户目录（缺省是作者的 `.workbuddy`） |
-| `WB_LEDGER_DIR` | 放你 Excel 台账的那个目录（缺省 `D:/1/对标账号`） |
+| `WB_LEDGER_DIR` | 放你 Excel 台账的那个目录（缺省 `<包>\ledger`；`start.bat` 只在存在 `D:\1\对标账号` 时覆盖） |
 | `WB_PROXY` | 看板和抓取共用的代理覆盖项；不设时两边都自动探测（系统代理 → 常见本地端口） |
 | `WB_REVERSE_DIR` | 逆向分析的临时目录（缺省作者的 `D:/workbuddy_project/tiktok/reverse`） |
 | `WB_YTDLP` | 那个视图用的 `yt-dlp.exe`（缺省作者的 WorkBuddy 二进制目录） |
@@ -324,9 +330,9 @@ pipeline\.venv\Scripts\python.exe -m pip install -r pipeline\requirements.txt
 
 这三处都是作者磁盘上的路径。改路径，键名不要动：
 
-1. `pipeline/pipeline.py:36` —— `"python"`：跑流水线每一步的解释器。
-2. `pipeline/pipeline.py:41` —— `"output_root"`：抓取产物写到哪里。
-3. `pipeline/daily_update.py:44` —— `PY`：同一个解释器，日更流程用。
+1. `pipeline/pipeline.py:39` —— `"python"`：跑流水线每一步的解释器。
+2. `pipeline/pipeline.py:46` —— `"output_root"`：抓取产物写到哪里。
+3. `pipeline/daily_update.py:45` —— `PY`：同一个解释器，日更流程用。
 
 这 3 处只是**主链路**。`pipeline/scripts/` 下还有十余个辅助 / 历史脚本同样写死了这些路径
 —— 例如 `build_13col_sheets.py:17,22`、`migrate_translations.py:13-15`、
@@ -393,8 +399,8 @@ copy pipeline\accounts.example.json pipeline\accounts.json
   （解释器、代理端口、台账位置、测试基线、WAF 兜底都在里面）。
 - `DEPLOY_GUIDE.md` —— 把「只有看板」的副本搬到另一台机器（端口 8789、14 列台账、台账在 `ledger\`）。
   终端使用者请直接用上面的**绿色版** ZIP。
-- `工作上下文归档_最新.md` —— 工作上下文：固定规则、路径、解释器。
 - `qa/gaps.md` —— 本次改动的测试**没能**验证什么、为什么。
-- **许可（重要）。** **仓库源码**是 **MIT**（`LICENSE` —— 发布前把版权行里的 `<YOUR NAME>` 换成你自己的名字）。
+- **许可（重要）。** **仓库源码**是 **MIT**；`LICENSE` 里的版权行是 `Copyright (c) 2026 aozzz6`
+  —— 原样分发就保留它，只有你 fork 之后改了代码，才换成你自己的名字。
   **发布出来的 ZIP 不只有 MIT**：包里带着 **GPLv3** 的 **ffmpeg**（以及 **PyAV** 里那套 FFmpeg），
   分发 ZIP 就要随附 GPLv3 全文和源码获取方式 —— 见 `THIRD_PARTY_NOTICES.md`。
