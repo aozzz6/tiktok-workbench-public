@@ -273,6 +273,10 @@ try:
         for pat in FORBIDDEN_GLOBS:
             hits = [str(Path(h).relative_to(STAGE).as_posix())
                     for h in _glob.glob(str(STAGE / pat), recursive=True)]
+            if pat == "**/__pycache__":
+                # python\Lib 的 .pyc 是解释器的一部分（CRD-0005），要保留；
+                # 仓库代码树（webapp/pipeline/packaging/根）的 __pycache__ 才必须排除。
+                hits = [h for h in hits if not h.startswith("python/Lib/")]
             present += hits
         assert_(not present, f"§6 排除清单里这些还在包里：{present}")
     check("(a) §6 排除清单：无 venv/tests/数据/个人文档/缓存/压缩包", _exclusions)
