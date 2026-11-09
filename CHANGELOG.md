@@ -3,7 +3,7 @@
 All notable changes to this workbench are recorded here, newest first.
 Entries carry the date; since `0.1.0` they also carry the `VERSION` number.
 
-## 0.1.0 — 2026-11-05 — Portable green build: 两个 ZIP（完整 full / 精简 slim）, no bundled LLM key, no PyTorch in the package
+## 1.1.0 — 2026-11-05 — Portable green build: 两个 ZIP（完整 full / 精简 slim）, no bundled LLM key, no PyTorch in the package
 
 ### Added
 
