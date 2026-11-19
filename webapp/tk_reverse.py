@@ -951,7 +951,9 @@ def load_vision_models() -> list[dict]:
     except Exception:
         return []
     items = raw if isinstance(raw, list) else raw.get("models", [])
-    return [m for m in items if m.get("supportsImages") and m.get("apiKey") and m.get("url")]
+    import llm
+    return [m for m in items if isinstance(m, dict) and m.get("supportsImages") and m.get("url")
+            and (m.get("apiKey") or (m.get("provider_id") and llm.local_provider_url(m["url"])))]
 
 
 def pick_model(name: str = "") -> dict:
@@ -962,10 +964,21 @@ def pick_model(name: str = "") -> dict:
         for m in models:
             if m.get("id") == name or m.get("name") == name:
                 return m
-    for m in models:
+    import llm
+    cfg = llm.load_config()
+    selected = str((cfg.get("purposes") or {}).get("reverse") or cfg.get("model") or "")
+    if cfg.get("enabled") and selected:
+        for m in models:
+            if m.get("id") == selected:
+                return m
+    legacy = [m for m in models if not m.get("provider_id")]
+    for m in legacy:
         if m.get("id") == "deepseek-flash":
             return m
-    return models[0]
+    if legacy:
+        return legacy[0]
+    raise ReverseError("请先在 AI 设置中启用 AI，并选择视觉模型或设置反推用途模型")
+
 
 
 _RETRY_HTTP = {408, 409, 425, 429, 500, 502, 503, 504}
@@ -980,6 +993,17 @@ def _chat(model: dict, content: list, max_tokens: int = 4000, timeout: int = 420
     ★ 2026-10-23 审查 R5：429/5xx/网络抖动按指数退避重试；400/401/403/404
       等参数或鉴权错误直接失败（重试也没用）。旧版一次抖动就整单失败。
     """
+    if model.get("provider_id"):
+        import llm
+        if not llm.load_config().get("enabled"):
+            raise ReverseError("AI 已关闭，请在模型设置中启用")
+        try:
+            out = llm._call_one(model, [{"role": "user", "content": content}],
+                                max_tokens=max_tokens, timeout=timeout, temperature=0.4,
+                                json_mode=False, purpose="reverse", retries=retries)
+        except llm.LLMError as exc:
+            raise ReverseError(str(exc)) from None
+        return out["text"]
     body_base = {
         "model": model.get("id") or model.get("name"),
         "messages": [{"role": "user", "content": content}],

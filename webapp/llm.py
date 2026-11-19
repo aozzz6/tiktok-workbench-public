@@ -26,6 +26,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import quote, urlsplit
 from pathlib import Path
 
 import config
@@ -158,7 +159,8 @@ def _raw_models() -> list[dict]:
             continue
         key = str(m.get("apiKey") or "").strip()
         # 本地推理服务（Ollama/vLLM/LM Studio）通常不要 key
-        local = any(h in url for h in ("127.0.0.1", "localhost", "0.0.0.0", "host.docker"))
+        local = (local_provider_url(url) if m.get("provider_id") else
+                 any(h in url for h in ("127.0.0.1", "localhost", "0.0.0.0", "host.docker")))
         if not key and not local:
             continue
         out.append({**m, "url": url, "apiKey": key})
@@ -181,7 +183,8 @@ def _public_row(m: dict, cfg: dict) -> dict:
         "style": api_style(m),
         "supports_images": bool(m.get("supportsImages")),
         "supports_reasoning": bool(m.get("supportsReasoning")),
-        "key_masked": mask_key(str(m.get("apiKey") or "")),
+        "key_masked": ("已设置" if m.get("provider_id") and m.get("apiKey") else
+                       mask_key(str(m.get("apiKey") or ""))),
         "local": any(h in str(m.get("url") or "") for h in ("127.0.0.1", "localhost")),
         "env": bool(m.get("_env")),
         "cooldown_s": max(0, int((cool.get("until") or 0) - time.time())),
@@ -206,10 +209,9 @@ def mask_key(key: str) -> str:
 def resolve(name: str) -> dict | None:
     if not name:
         return None
-    for m in _raw_models():
-        if name in (str(m.get("id") or ""), str(m.get("name") or "")):
-            return m
-    return None
+    models = _raw_models()
+    return next((m for m in models if name == m.get("id")), None) or next(
+        (m for m in models if name == m.get("name")), None)
 
 
 def pick(chain: list[str] | None = None, cfg: dict | None = None) -> dict:
@@ -222,7 +224,7 @@ def pick(chain: list[str] | None = None, cfg: dict | None = None) -> dict:
         m = resolve(name)
         if m:
             return m
-    models = _raw_models()
+    models = [m for m in _raw_models() if not m.get("provider_id")]
     if not models:
         raise LLMError(f"没有可用模型：{MODELS_JSON} 里没有同时具备 url 与 apiKey 的条目")
     for pref in ("deepseek-flash", "TM ·Auto", "gpt-4o-mini", "claude-3-5-haiku"):
@@ -264,7 +266,7 @@ def chain_for(model: str | None = None, purpose: str | None = None) -> list[str]
 def api_style(model: dict) -> str:
     """显式 api_style > vendor/url 推断。返回值：openai | anthropic | gemini。"""
     explicit = str(model.get("api_style") or model.get("apiStyle") or "").strip().lower()
-    if explicit in ("openai", "anthropic", "gemini"):
+    if explicit in ("openai", "anthropic", "gemini", "responses"):
         return explicit
     blob = " ".join(str(model.get(k) or "") for k in ("vendor", "id", "name", "url")).lower()
     if "anthropic" in blob or "claude" in blob:
@@ -292,11 +294,30 @@ def _endpoint(style: str, model: dict) -> str:
         if ":generateContent" in url:       # 完整端点：.../models/<id>:generateContent
             return url
         base = url if "/v1beta" in url or "/v1/" in url else url + "/v1beta"
-        mid = str(model.get("id") or model.get("name") or "")
+        mid = quote(remote_model(model).removeprefix("models/"), safe="")
         return f"{base}/models/{mid}:generateContent"
+    if style == "responses":
+        return url if url.endswith("/responses") else url + "/responses"
     if url.endswith("/chat/completions"):   # 完整端点：.../v1/chat/completions
         return url
     return url + "/chat/completions"
+
+
+def remote_model(model: dict) -> str:
+    return str(model.get("provider_model") or model.get("id") or model.get("name") or "")
+
+
+def local_provider_url(url: str) -> bool:
+    try:
+        return urlsplit(url).hostname in {"localhost", "127.0.0.1", "::1"}
+    except ValueError:
+        return False
+
+
+class NoProviderRedirect(urllib.request.HTTPRedirectHandler):
+    """New provider credentials must not travel to a redirected host."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def _headers(style: str, model: dict) -> dict:
@@ -327,8 +348,29 @@ def _split_system(messages: list[dict]) -> tuple[str, list[dict]]:
 def _body(style: str, model: dict, messages: list[dict], max_tokens: int,
           temperature: float, json_mode: bool, token_field: str = "max_tokens") -> dict:
     system, rest = _split_system(messages)
+    if style == "responses":
+        def parts(content):
+            if not isinstance(content, list):
+                return str(content or "")
+            out = []
+            for part in content:
+                if part.get("type") == "text":
+                    out.append({"type": "input_text", "text": str(part.get("text") or "")})
+                elif part.get("type") == "image_url":
+                    image = part.get("image_url") or {}
+                    if isinstance(image, dict) and image.get("url"):
+                        out.append({"type": "input_image", "image_url": image["url"],
+                                    "detail": image.get("detail") or "auto"})
+            return out
+        body = {"model": remote_model(model), "store": False, "max_output_tokens": max_tokens,
+                "input": [{"role": m.get("role", "user"), "content": parts(m.get("content"))} for m in rest]}
+        if system:
+            body["instructions"] = system
+        if json_mode:
+            body["text"] = {"format": {"type": "json_object"}}
+        return body
     if style == "anthropic":
-        body = {"model": str(model.get("id") or model.get("name")),
+        body = {"model": remote_model(model),
                 "max_tokens": max_tokens,
                 "temperature": temperature,
                 "messages": [{"role": m.get("role", "user"),
@@ -346,7 +388,7 @@ def _body(style: str, model: dict, messages: list[dict], max_tokens: int,
         if system:
             body["systemInstruction"] = {"parts": [{"text": system}]}
         return body
-    body = {"model": str(model.get("id") or model.get("name")),
+    body = {"model": remote_model(model),
             "messages": messages,
             token_field: max_tokens,
             "temperature": temperature}
@@ -357,6 +399,12 @@ def _body(style: str, model: dict, messages: list[dict], max_tokens: int,
 
 def _extract(style: str, data: dict) -> tuple[str, dict]:
     """统一取出 (正文, usage)。三套响应结构在这里被抹平。"""
+    if style == "responses":
+        parts = [str(p.get("text") or "") for item in (data.get("output") or [])
+                 if isinstance(item, dict) and item.get("type") == "message"
+                 for p in (item.get("content") or []) if isinstance(p, dict) and p.get("type") == "output_text"]
+        u = data.get("usage") or {}
+        return "".join(parts), {"in": u.get("input_tokens"), "out": u.get("output_tokens")}
     if style == "anthropic":
         parts = [b.get("text") or "" for b in (data.get("content") or [])
                  if isinstance(b, dict) and b.get("type") == "text"]
@@ -491,6 +539,8 @@ def _call_one(model: dict, messages: list[dict], *, max_tokens: int, temperature
     url = _endpoint(style, model)
     cfg = load_config()
     opener = _opener(cfg)
+    if model.get("provider_id"):
+        opener.add_handler(NoProviderRedirect())
     max_out = max_tokens
     token_field = "max_tokens"
     last_err: LLMError | None = None
@@ -512,9 +562,14 @@ def _call_one(model: dict, messages: list[dict], *, max_tokens: int, temperature
         except urllib.error.HTTPError as e:
             if ticket is not None:
                 budget.note_failure(ticket)
-            raw = e.read()[:300].decode("utf-8", "replace")
+            raw = e.read(1024).decode("utf-8", "replace")
+            needs_completion_limit = "max_completion_tokens" in raw
+            if model.get("provider_id"):
+                raw = ("鉴权失败，请检查 API Key" if e.code in (401, 403) else
+                       "模型或接口不存在，请核对 Base URL 和模型 ID" if e.code == 404 else
+                       "服务商拒绝请求，请检查协议、接口或额度")
             # 部分网关只认 max_completion_tokens（新版 OpenAI 推理模型）→ 换字段重试一次
-            if e.code == 400 and token_field == "max_tokens" and "max_completion_tokens" in raw:
+            if e.code == 400 and token_field == "max_tokens" and needs_completion_limit:
                 token_field = "max_completion_tokens"
                 last_err = LLMError(f"{mid} 400：{raw[:120]}", code=400, retryable=True, model=mid)
                 continue
@@ -533,7 +588,7 @@ def _call_one(model: dict, messages: list[dict], *, max_tokens: int, temperature
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             if ticket is not None:
                 budget.note_failure(ticket)
-            msg = getattr(e, "reason", e)
+            msg = (type(e).__name__ if model.get("provider_id") else getattr(e, "reason", e))
             last_err = LLMError(f"{mid} 网络不可达：{msg}", retryable=True, model=mid)
             if attempt < retries:
                 time.sleep(min(8, 2 ** attempt))
@@ -554,7 +609,12 @@ def _call_one(model: dict, messages: list[dict], *, max_tokens: int, temperature
             _note_fail(mid, str(last_err))
             raise last_err from None
 
-        text, usage = _extract(style, data)
+        if not isinstance(data, dict):
+            raise LLMError(f"{mid} 返回格式不正确", model=mid)
+        try:
+            text, usage = _extract(style, data)
+        except (AttributeError, TypeError, IndexError, KeyError):
+            raise LLMError(f"{mid} 返回格式不正确", model=mid) from None
         if ticket is not None:
             budget.note_usage(ticket, usage)   # 拿到响应的都要记（含空正文重问）
         if not text.strip():
@@ -671,13 +731,19 @@ def probe(model: str | None = None, timeout: float = 25) -> dict:
       内置偏好模型 —— 否则「测试连接」会测了另一个模型却报 ok，等于骗人。
       合法模型与不传模型（= 默认链）的路径完全不变。
     """
-    if model and resolve(model) is None:
+    selected = resolve(model) if model else None
+    if model and selected is None:
         raise LLMError(f"模型不存在：{model}", model=model)
     t0 = time.time()
     try:
-        out = chat([{"role": "user", "content": '只输出 JSON：{"ok":true}'}],
-                   model, max_tokens=64, temperature=0, json_mode=True,
-                   timeout=timeout, purpose="probe", retries=0)
+        messages = [{"role": "user", "content": '只输出 JSON：{"ok":true}'}]
+        if selected:
+            # 显式测试只测这一条，关着业务 AI 时也可先验证设置。
+            out = _call_one(selected, messages, max_tokens=64, temperature=0,
+                            json_mode=False, timeout=timeout, purpose="probe", retries=0)
+        else:
+            out = chat(messages, max_tokens=64, temperature=0, json_mode=True,
+                       timeout=timeout, purpose="probe", retries=0)
         try:
             parse_json(out["text"])
             json_ok = True
@@ -685,7 +751,8 @@ def probe(model: str | None = None, timeout: float = 25) -> dict:
             json_ok = False
         return {"ok": True, "model": out["model"], "style": out["style"],
                 "latency_ms": int((time.time() - t0) * 1000), "json_ok": json_ok,
-                "usage": out.get("usage"), "preview": out["text"][:120]}
+                "usage": out.get("usage"),
+                "preview": ("" if selected and selected.get("provider_id") else out["text"][:120])}
     except LLMError as e:
         return {"ok": False, "model": e.model or (model or ""), "error": str(e),
                 "latency_ms": int((time.time() - t0) * 1000)}
@@ -694,8 +761,10 @@ def probe(model: str | None = None, timeout: float = 25) -> dict:
 def available() -> bool:
     """有没有可用的模型（不联网，只看配置与清单）。"""
     try:
-        if not load_config().get("enabled"):
+        cfg = load_config()
+        if not cfg.get("enabled"):
             return False
-        return bool(_raw_models())
+        explicit = {cfg.get("model"), *cfg.get("fallbacks", []), *cfg.get("purposes", {}).values()}
+        return any(not m.get("provider_id") or m.get("id") in explicit for m in _raw_models())
     except Exception:                       # noqa: BLE001
         return False

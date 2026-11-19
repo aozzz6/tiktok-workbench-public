@@ -24,6 +24,9 @@ import sys
 import threading
 import tempfile
 import time
+import urllib.error
+import urllib.request
+from urllib.parse import urlsplit
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -2245,12 +2248,15 @@ def _model_public(m: dict, cfg: dict) -> dict:
     key = str(m.get("apiKey") or "").strip()
     url = str(m.get("url") or "").strip()
     return {
+        "provider_id": m.get("provider_id"),
+        "provider_name": m.get("provider_name"),
+        "provider_model": m.get("provider_model"),
         "id": mid,
         "name": str(m.get("name") or mid),
         "vendor": str(m.get("vendor") or ""),
         "url": url,
         "api_style": str(m.get("api_style") or ""),
-        "key_masked": llm.mask_key(key),
+        "key_masked": ("已设置" if key else "") if m.get("provider_id") else llm.mask_key(key),
         "has_key": bool(key),
         "local": any(h in url for h in ("127.0.0.1", "localhost", "0.0.0.0", "host.docker")),
         "supportsToolCall": bool(m.get("supportsToolCall")),
@@ -2319,6 +2325,125 @@ def _model_clean(payload: dict, base: dict | None) -> dict:
     return {k: out[k] for k in _MODEL_WRITE_FIELDS if k in out}
 
 
+_PROVIDER_ID = re.compile(r"[a-z][a-z0-9_-]{0,31}")
+_PROVIDER_MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,159}")
+
+
+def _provider_connection(payload: dict, previous: list[dict]) -> dict:
+    pid = str(payload.get("provider_id") or "").strip()
+    if not _PROVIDER_ID.fullmatch(pid):
+        raise HTTPException(400, "服务商 ID 必须是小写字母开头，最多 32 字符，可含数字、-、_")
+    url = str(payload.get("url") or "").strip().rstrip("/")
+    try:
+        u = urlsplit(url)
+        if (len(url) > 500 or any(char.isspace() or ord(char) < 32 for char in url)
+                or not u.hostname or u.username is not None or u.password is not None
+                or u.query or u.fragment or u.port == 0
+                or (u.scheme != "https" and not (u.scheme == "http" and llm.local_provider_url(url)))):
+            raise ValueError
+    except ValueError:
+        raise HTTPException(400, "Base URL 需为 HTTPS，也可用本机 HTTP；不要在地址里放账号、密钥或查询参数") from None
+    style = str(payload.get("api_style") or "").strip()
+    if style not in ("openai", "anthropic", "gemini", "responses"):
+        raise HTTPException(400, "请选 Chat Completions、Responses、Anthropic Messages 或 Gemini 协议")
+    if ((url.endswith("/responses") and style != "responses") or (url.endswith("/messages") and style != "anthropic")
+            or (url.endswith("/chat/completions") and style != "openai")):
+        raise HTTPException(400, "完整接口地址与所选协议不符，请核对 Base URL")
+    key = str(payload.get("apiKey") or "").strip()
+    if len(key) > 1024 or any(not 33 <= ord(c) <= 126 for c in key):
+        raise HTTPException(400, "API Key 格式不正确")
+    if previous and not key:
+        saved = previous[0]
+        if (url, style) != (saved.get("url"), saved.get("api_style")):
+            if not llm.local_provider_url(url):
+                raise HTTPException(400, "接口或协议变更后请重新输入这家服务商的 API Key")
+        else:
+            key = str(saved.get("apiKey") or "")
+    if not key and not llm.local_provider_url(url):
+        raise HTTPException(400, "此服务商需要填写 API Key")
+    name = (str(payload.get("provider_name") or "").strip() or pid)
+    if len(name) > 80:
+        raise HTTPException(400, "服务商名称最多 80 字符")
+    return {"provider_id": pid, "provider_name": name, "vendor": name,
+            "url": url, "api_style": style, "apiKey": key}
+
+
+@app.post("/api/ai/providers")
+def ai_provider_save(request: Request, payload: dict | None = None) -> dict:
+    """先校验整组模型，再一次写盘；保存不探测、不改默认或已有 AI 开关。"""
+    _guard_local_write(request)
+    payload = payload or {}
+    rows = payload.get("models")
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 40:
+        raise HTTPException(400, "请填写 1–40 个模型")
+    pid = str(payload.get("provider_id") or "").strip()
+    with _MODELS_LOCK:
+        doc = _models_doc()
+        previous = [m for m in doc["items"] if m.get("provider_id") == pid]
+        current = {str(m.get("id") or ""): m for m in doc["items"]}
+        conn = _provider_connection(payload, previous)
+        updated: dict[str, dict] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                raise HTTPException(400, "模型配置格式不正确")
+            remote = str(row.get("id") or "").strip()
+            if not _PROVIDER_MODEL.fullmatch(remote):
+                raise HTTPException(400, "模型 ID 格式不正确，请按服务商提供的实际 ID 填写")
+            mid = f"{pid}:{remote}"
+            if mid in updated:
+                raise HTTPException(400, "同一服务商内不能重复添加模型")
+            existing = current.get(mid, {})
+            if existing and existing.get("provider_id") != pid:
+                raise HTTPException(409, "服务商与现有模型 ID 冲突，请用不同的服务商 ID")
+            images = row.get("images") is True
+            if images and conn["api_style"] not in ("openai", "responses"):
+                raise HTTPException(400, "当前商品图/反推只支持 Chat Completions 或 Responses 的图片输入")
+            updated[mid] = {**existing, **conn, "id": mid, "name": remote,
+                            "provider_model": remote, "supportsImages": images,
+                            "keyUpdatedAt": int(time.time()) if payload.get("apiKey") else existing.get("keyUpdatedAt")}
+        for old in previous:
+            # 编辑时，不会删掉已被用途绑定的行，密钥和接口同步到该服务商的所有模型。
+            if old["id"] not in updated:
+                if old.get("supportsImages") and conn["api_style"] not in ("openai", "responses"):
+                    raise HTTPException(400, "请先取消已有模型的图片输入设置，再切换协议")
+                updated[old["id"]] = {**old, **conn}
+        if not doc["items"] and not llm.AI_CONFIG_JSON.exists() and not os.environ.get("WB_AI_KEY"):
+            llm.save_config({"enabled": False})
+        doc["items"] = [updated.pop(m.get("id"), m) for m in doc["items"]] + list(updated.values())
+        _models_backup()
+        _models_write(doc)
+    cfg = llm.load_config()
+    return {"ok": True, "models": [_model_public(m, cfg) for m in doc["items"] if m.get("provider_id") == pid]}
+
+
+@app.post("/api/ai/providers/discover")
+def ai_provider_discover(request: Request, payload: dict | None = None) -> dict:
+    """只查询填入的 Chat Completions 服务商的模型列表，不写入，也不做推理。"""
+    _guard_local_write(request)
+    payload = payload or {}
+    pid = str(payload.get("provider_id") or "").strip()
+    previous = [m for m in _models_doc()["items"] if m.get("provider_id") == pid]
+    conn = _provider_connection(payload, previous)
+    if conn["api_style"] not in ("openai", "responses") or conn["url"].endswith("/responses"):
+        raise HTTPException(400, "这个协议或地址不支持自动列出模型，请手动填写模型 ID")
+    url = conn["url"].removesuffix("/chat/completions") + "/models"
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), llm.NoProviderRedirect())
+    try:
+        with opener.open(urllib.request.Request(url, headers=llm._headers("openai", conn)), timeout=10) as resp:
+            data = json.loads(resp.read(1_000_001))
+    except urllib.error.HTTPError as e:
+        msg = "鉴权失败，请检查 API Key" if e.code in (401, 403) else "服务商没有返回模型列表，请手动填写"
+        raise HTTPException(400, msg) from None
+    except (OSError, ValueError, TimeoutError):
+        raise HTTPException(400, "读不到服务商的模型列表，请手动填写") from None
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise HTTPException(400, "服务商没有返回标准模型列表，请手动填写")
+    ids = sorted({row["id"] for row in rows if isinstance(row, dict)
+                  and isinstance(row.get("id"), str) and _PROVIDER_MODEL.fullmatch(row["id"])})
+    return {"models": ids[:200], "truncated": len(ids) > 200}
+
+
 @app.get("/api/ai/models/admin")
 def ai_models_admin() -> dict:
     """管理页数据：全部条目（含缺 key 的）+ 默认/回退 + 备份清单。key 只有掩码。"""
@@ -2356,6 +2481,8 @@ def ai_models_save(request: Request, payload: dict | None = None) -> dict:
         doc = _models_doc()
         idx = next((i for i, m in enumerate(doc["items"])
                     if str(m.get("id") or "") == mid), -1)
+        if idx >= 0 and doc["items"][idx].get("provider_id"):
+            raise HTTPException(409, "此模型属于服务商，请编辑服务商")
         item = _model_clean(payload, doc["items"][idx] if idx >= 0 else None)
         if idx < 0:
             doc["items"].append(item)
@@ -2467,19 +2594,19 @@ _PS_SCAN_PROMPT = (
 
 
 def _ps_vision_model(pref: str | None = None) -> str | None:
-    """挑一个能看图的模型：显式指定 > 当前配置 > 清单里第一个 supports_images。"""
-    def ok(mid: str) -> bool:
-        m = llm.resolve(mid)
-        return bool(m and (m.get("supportsImages") or m.get("supports_images")))
-
-    if pref and ok(str(pref)):
-        return str(pref)
-    cur = str(llm.load_config().get("model") or "")
-    if cur and ok(cur):
-        return cur
-    for m in llm.list_models():
-        if m.get("supports_images") and ok(str(m.get("id") or "")):
-            return str(m.get("id"))
+    """显式选择 / 用途绑定 / 默认优先；仅允许旧配置自动挑选。"""
+    cfg = llm.load_config()
+    selected = [pref, (cfg.get("purposes") or {}).get("ps_product_scan"), cfg.get("model")]
+    for mid in selected:
+        m = llm.resolve(str(mid)) if mid else None
+        if m and m.get("supportsImages"):
+            return str(mid)
+        if mid and mid == pref:
+            return None  # 错误的显式选择，不代用户切换服务商
+    for item in llm.list_models():
+        m = llm.resolve(item.get("id", "")) if item.get("supports_images") else None
+        if m and not m.get("provider_id") and m.get("supportsImages"):
+            return item["id"]
     return None
 
 
@@ -2558,8 +2685,10 @@ def ps_product_scan(payload: dict | None = None) -> dict:
     model = _ps_vision_model(model_pref)
     if not model:
         return {"ok": False, "degraded": True, "reason": "没有可用的视觉模型（设置 → 模型里挑一个支持图片的）"}
-    if not llm.available():
-        return {"ok": False, "degraded": True, "reason": "AI 未启用（设置 → 模型）", "model": model}
+    chosen = llm.resolve(model)
+    is_provider = bool(chosen and chosen.get("provider_id"))
+    if not (llm.load_config().get("enabled") if is_provider else llm.available()):
+        return {"ok": False, "degraded": True, "reason": "AI 未启用（AI 接入）", "model": model}
 
     cache_key = hashlib.sha1(("|".join(digests) + "|" + model + "|" + hint).encode("utf-8")).hexdigest()
     cached = _ps_cache_read().get(cache_key)
@@ -2571,9 +2700,15 @@ def ps_product_scan(payload: dict | None = None) -> dict:
     messages = [{"role": "user", "content": [{"type": "text", "text": text_block}] + parts}]
     t0 = time.time()
     try:
-        out = llm.chat_json(messages, model, max_tokens=1800,
-                            purpose="ps_product_scan", retries=1)
-        product = out.get("data") or {}
+        if is_provider:
+            # 图片仅发送至为此操作选择的服务商，不跨服务商回退。
+            out = llm._call_one(chosen, messages, max_tokens=1800, temperature=0.2,
+                                timeout=30, json_mode=False, purpose="ps_product_scan", retries=0)
+            product = llm.parse_json(out["text"])
+        else:
+            out = llm.chat_json(messages, model, max_tokens=1800,
+                                purpose="ps_product_scan", retries=1)
+            product = out.get("data") or {}
     except llm.LLMError as exc:
         return {"ok": False, "degraded": True, "reason": f"识别失败：{exc}", "model": model}
     except Exception as exc:                        # noqa: BLE001

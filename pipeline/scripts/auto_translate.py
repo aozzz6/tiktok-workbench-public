@@ -30,7 +30,7 @@ from pathlib import Path
 PIPE = Path(__file__).resolve().parent.parent
 PY = str(PIPE / ".venv" / "Scripts" / "python.exe")
 BUILDER = PIPE / "scripts" / "build_ledger_15col.py"
-MODELS_JSON = Path(os.path.expanduser("~")) / ".workbuddy" / "models.json"
+MODELS_JSON = Path(os.environ.get("WB_HOME") or Path.home() / ".workbuddy") / "models.json"
 BATCH = 18          # 每批条数（避免单请求过大）
 TIMEOUT = 240
 
@@ -53,6 +53,14 @@ def load_model(model_id: str | None = None):
         if not m:
             raise SystemExit(f"模型不存在: {model_id}；可选: {[x.get('id') for x in items]}")
         return m
+    if any(isinstance(m, dict) and m.get("provider_id") for m in items):
+        llm = _workbench_llm()
+        cfg = llm.load_config()
+        if cfg.get("enabled") and cfg.get("model"):
+            m = next((x for x in items if x.get("id") == cfg["model"] and x.get("provider_id")), None)
+            if m:
+                return m
+        items = [m for m in items if not m.get("provider_id")]
     for pref in ("TM ·Auto", "TM ·Fast", "deepseek-flash"):
         m = next((x for x in items if x.get("id") == pref
                   and x.get("apiKey") and x.get("url")), None)
@@ -113,9 +121,26 @@ SYS_PROMPT = (
 )
 
 
+def _workbench_llm():
+    webapp = str(PIPE.parent / "webapp")
+    if webapp not in sys.path:
+        sys.path.insert(0, webapp)
+    import llm
+    return llm
+
+
 def call_llm(model: dict, batch: list[dict]) -> dict:
     """batch: [{account,row,text}] → {account: {str(row): 译文}}"""
     payload = [{"account": b["account"], "row": b["row"], "text": b["text"]} for b in batch]
+    if model.get("provider_id"):
+        llm = _workbench_llm()
+        if not llm.load_config().get("enabled"):
+            raise RuntimeError("AI 已关闭，请在模型设置中启用")
+        out = llm._call_one(model, [{"role": "system", "content": SYS_PROMPT},
+                                   {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+                            max_tokens=4000, timeout=TIMEOUT, temperature=0.3,
+                            json_mode=False, purpose="translate", retries=0)
+        return llm.parse_json(out["text"])
     body = json.dumps({
         "model": model["id"],
         "messages": [
