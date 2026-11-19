@@ -245,7 +245,8 @@
       '<div class="ai-index-foot">' +
       '<button class="btn ghost sm" data-act="testall" style="width:100%;margin-bottom:6px"' +
       (testingAll ? " disabled" : "") + '>' + (testingAll ? "全测中…" : "全测（" + models().filter(function (m) { return m.has_key; }).length + "）") + '</button>' +
-      '<button class="ai-add" data-act="new">＋ 新增模型</button>' +
+      '<button class="ai-add" data-act="provider-open">＋ 添加模型服务商</button>' +
+      '<button class="btn ghost sm" data-act="new">旧配置：单独新增模型</button>' +
       '</div>' +
       '</aside>';
   }
@@ -354,7 +355,7 @@
       '<div class="ai-prof-act">' +
       '<button class="btn ghost sm" data-act="test" data-id="' + esc(m.id) + '"' + (t && t.busy ? " disabled" : "") + '>' +
       (t && t.busy ? "测试中…" : "测试连通") + '</button>' +
-      '<button class="btn ghost sm" data-act="edit" data-id="' + esc(m.id) + '">编辑</button>' +
+      '<button class="btn ghost sm" data-act="' + (m.provider_id ? "provider-edit" : "edit") + '" data-id="' + esc(m.provider_id || m.id) + '">' + (m.provider_id ? "编辑服务商" : "编辑") + '</button>' +
       (m.is_default ? '' : '<button class="btn ghost sm" data-act="def" data-id="' + esc(m.id) + '">设为默认</button>') +
       '<button class="btn danger sm" data-act="del" data-id="' + esc(m.id) + '">删除</button>' +
       '</div></div>' + warn +
@@ -518,8 +519,136 @@
 
   /* ───────────── 抽屉 / 确认框 ───────────── */
 
+  var PROVIDER_PRESETS = {
+    "": { name: "", id: "", style: "openai", url: "", models: [] },
+    deepseek: { name: "DeepSeek", id: "deepseek", style: "openai", url: "https://api.deepseek.com", models: [] },
+    openai: { name: "OpenAI", id: "openai", style: "responses", url: "https://api.openai.com/v1", models: [] },
+    console: { name: "OpenCode Console", id: "opencode-console", style: "openai",
+      url: "https://opencode.ai/inference/openai/v1", models: [] },
+    anthropic: { name: "Anthropic", id: "anthropic", style: "anthropic", url: "https://api.anthropic.com/v1", models: [] },
+    gemini: { name: "Google Gemini", id: "gemini", style: "gemini", url: "https://generativelanguage.googleapis.com/v1beta", models: [] },
+    ollama: { name: "Ollama", id: "ollama", style: "openai", url: "http://127.0.0.1:11434/v1", models: [] }
+  };
+  var PROTOCOLS = [["openai", "Chat Completions（OpenAI 兼容）"], ["responses", "OpenAI Responses"],
+    ["anthropic", "Anthropic Messages"], ["gemini", "Google Gemini"]];
+
+  function providerGroupsHtml() {
+    var seen = new Set();
+    return models().filter(function (m) {
+      if (!m.provider_id || seen.has(m.provider_id)) return false;
+      seen.add(m.provider_id);
+      return true;
+    }).map(function (m) {
+      return '<button class="btn ghost sm" data-act="provider-view" data-id="' + esc(m.id) + '">' +
+        esc(m.provider_name || m.provider_id) + '</button>';
+    }).join(" ");
+  }
+
+  function openProvider(pid) {
+    var ms = models().filter(function (m) { return m.provider_id && m.provider_id === pid; });
+    var m = ms[0] || {};
+    drawer = {mode: "provider", editing: !!ms.length, preset: "", name: m.provider_name || "",
+      pid: m.provider_id || "", style: m.api_style || "openai", url: m.url || "", key: "",
+      rows: ms.length ? ms.map(function (row) { return {id: row.provider_model, images: !!row.supportsImages}; })
+        : [{id: "", images: false}], found: [], err: "", busy: false};
+    render();
+    var field = document.getElementById(ms.length ? "ai-provider-name" : "ai-provider-preset");
+    if (field) field.focus();
+  }
+
+  function readProvider() {
+    function val(id) { var e = document.getElementById(id); return e ? e.value : ""; }
+    var d = drawer;
+    d.name = val("ai-provider-name");
+    d.pid = val("ai-provider-id");
+    d.style = val("ai-provider-protocol");
+    d.url = val("ai-provider-url");
+    d.key = val("ai-provider-key");
+    d.rows = d.rows.map(function (_, i) {
+      var img = document.getElementById("ai-provider-image-" + i);
+      return {id: val("ai-provider-model-" + i), images: !!(img && img.checked && !img.disabled)};
+    });
+    return {provider_name: d.name, provider_id: d.pid, api_style: d.style,
+      url: d.url, apiKey: d.key, models: d.rows.filter(function (m) { return m.id.trim(); })};
+  }
+
+  function providerDrawerHtml() {
+    var d = drawer;
+    var disabled = d.busy ? " disabled" : "";
+    var images = d.style === "openai" || d.style === "responses";
+    var rows = d.rows.map(function (m, i) {
+      return '<div class="ai-field" style="padding: 0.4rem 0">' +
+        '<label for="ai-provider-model-' + i + '">模型 ID ' + (i + 1) + '</label>' +
+        '<input id="ai-provider-model-' + i + '" value="' + esc(m.id) + '" autocomplete="off" maxlength="160"' + disabled + '>' +
+        '<label><input type="checkbox" id="ai-provider-image-' + i + '"' + (m.images && images ? " checked" : "") +
+        (images ? disabled : " disabled") + '> 支持图片</label> ' +
+        (d.rows.length > 1 && !d.editing ? '<button class="btn ghost sm" data-act="provider-remove-row" data-index="' +
+          i + '"' + disabled + '>移除</button>' : "") + '</div>';
+    }).join("");
+    return '<div class="ai-mask" data-act="drawer-close"></div>' +
+      '<aside class="ai-drawer" role="dialog" aria-modal="true" aria-label="模型服务商">' +
+      '<div class="ai-drawer-head"><h2>' + (d.editing ? "编辑模型服务商" : "添加模型服务商") + '</h2>' +
+      '<button class="ai-iconbtn" data-act="drawer-close" aria-label="关闭"' + disabled + '>×</button></div>' +
+      '<div class="ai-drawer-body"><p class="muted">先选预设或自定义接口，再给这家服务商填一把 Key，可以添加多个模型。</p>' +
+      (d.editing ? "" : '<label class="ai-field">选择服务商<select id="ai-provider-preset"' + disabled + '>' +
+        Object.keys(PROVIDER_PRESETS).map(function (k) {
+          return '<option value="' + k + '"' + (k === d.preset ? " selected" : "") + '>' +
+            esc(PROVIDER_PRESETS[k].name || "自定义模型 API") + '</option>';
+        }).join("") + '</select></label>') +
+      '<label class="ai-field">服务商名称<input id="ai-provider-name" value="' + esc(d.name) + '" maxlength="80"' + disabled + '></label>' +
+      '<label class="ai-field">服务商 ID<input id="ai-provider-id" value="' + esc(d.pid) + '" placeholder="my-provider" maxlength="32"' +
+      (d.editing ? " readonly" : "") + disabled + '></label>' +
+      '<label class="ai-field">API 协议<select id="ai-provider-protocol"' + disabled + '>' +
+      PROTOCOLS.map(function (p) { return '<option value="' + p[0] + '"' + (d.style === p[0] ? " selected" : "") +
+        '>' + esc(p[1]) + '</option>'; }).join("") +
+      '</select></label><label class="ai-field">Base URL<input id="ai-provider-url" value="' + esc(d.url) +
+      '" placeholder="https://example.com/v1" autocomplete="off"' + disabled + '></label>' +
+      '<label class="ai-field">API Key<input type="password" id="ai-provider-key" autocomplete="new-password" placeholder="' + (d.editing ? '留空保留当前 Key' : '本地免密服务可留空') + '"' + disabled + '></label>' +
+      (d.preset === "console" ? '<p class="muted">这是 Console 通用推理接口，不是面向编程工具的 OpenCode Go 套餐。</p>' : "") +
+      '<h3>模型</h3><p class="muted">填写服务商提供的模型 ID。文字测试不验证图片；商品图/反推只在支持图片输入的 Chat Completions 或 Responses 模型上可用。</p>' +
+      rows + '<button class="btn ghost sm" data-act="provider-add-row"' + disabled + (d.rows.length >= 40 ? ' disabled' : '') +
+      '>＋ 添加模型</button> ' +
+      '<button class="btn ghost sm" data-act="provider-discover"' + disabled +
+      (images ? "" : " disabled") + '>获取可用模型</button>' +
+      (d.found.length ? '<label class="ai-field">查询结果<select id="ai-provider-found"><option value="">选择并添加</option>' +
+        d.found.map(function (id) { return '<option>' + esc(id) + '</option>'; }).join("") + '</select></label>' : "") +
+      '<p class="muted">获取模型会连接填写的地址查询列表，不发送推理请求。保存只写本机设置，不请求服务商。</p>' +
+      (d.err ? '<p class="ai-err" role="alert">' + esc(d.err) + '</p>' : "") + '</div>' +
+      '<div class="ai-drawer-foot"><button class="btn ghost" data-act="drawer-close"' + disabled + '>取消</button>' +
+      '<button class="btn primary" data-act="provider-save"' + disabled + '>' + (d.busy ? "请稍候…" : "保存服务商和模型") +
+      '</button></div></aside>';
+  }
+
+  async function providerAction(discover) {
+    var d = drawer;
+    if (!d || d.mode !== "provider" || d.busy) return;
+    var body = readProvider();
+    if (discover && !window.confirm("向填写的服务商地址发送 API Key 来查询模型列表？不会保存配置，也不会请求推理。")) return;
+    d.busy = true; d.err = ""; render();
+    try {
+      var out = await postJson(discover ? "/api/ai/providers/discover" : "/api/ai/providers", body);
+      if (drawer !== d) return;
+      if (discover) {
+        d.found = out.models || [];
+        if (!d.found.length) d.err = "该服务商没有返回模型 ID，可继续手动填写。";
+      } else {
+        sel = (out.models && out.models[0] && out.models[0].id) || sel;
+        d.key = "";
+        drawer = null;
+        toast("服务商已保存。现在可单独测试模型。");
+        await load();
+      }
+    } catch (e) {
+      if (drawer === d) d.err = e.message;
+    } finally {
+      d.busy = false;
+      if (drawer === d) render();
+    }
+  }
+
   function drawerHtml() {
     if (!drawer) return "";
+    if (drawer.mode === "provider") return providerDrawerHtml();
     var m = drawer.mode === "edit" ? byId(drawer.id) : null;
     var isNew = drawer.mode === "new";
     function v(k, d) { return esc(m && m[k] != null ? m[k] : (d || "")); }
@@ -599,7 +728,9 @@
         '<div class="ai-skel" style="width:55%"></div></section>';
     }
     return '<div class="ai-wrap">' + indexHtml() +
-      '<div class="ai-main">' + configHtml() + profileHtml() + purposeHtml() + usageHtml() + filesHtml() +
+      '<div class="ai-main"><section class="panel"><div class="ai-panel-head"><h2>模型服务商</h2></div>' +
+      '<p class="muted">添加服务商，配置自己的 API Key 和模型。测试是实际文字请求，可能计入额度；设为默认和启用 AI 是独立操作。</p>' +
+      providerGroupsHtml() + '</section>' + configHtml() + profileHtml() + purposeHtml() + usageHtml() + filesHtml() +
       '</div></div>';
   }
 
@@ -609,6 +740,8 @@
     var list = document.getElementById("ai-index-list");
     if (list) listTop = list.scrollTop;
     h.innerHTML = headHtml() + bodyHtml() + drawerHtml() + confirmHtml();
+    var keyField = document.getElementById("ai-provider-key");
+    if (keyField && drawer && drawer.mode === "provider") keyField.value = drawer.key;
     var nl = document.getElementById("ai-index-list");
     if (nl) nl.scrollTop = listTop;
   }
@@ -858,12 +991,24 @@
     var b = e.target && e.target.closest ? e.target.closest("[data-act]") : null;
     if (!b) return;
     var act = b.getAttribute("data-act");
+    if (drawer && drawer.busy) return;
     var id = b.getAttribute("data-id") || "";
 
     if (act === "refresh") return load();
+    if (act === "provider-open") return openProvider("");
+    if (act === "provider-edit") return openProvider(id);
+    if (act === "provider-view") { sel = id; return render(); }
+    if (act === "provider-save") return providerAction(false);
+    if (act === "provider-discover") return providerAction(true);
+    if (act === "provider-add-row" && drawer && !drawer.busy && drawer.rows.length < 40) {
+      readProvider(); drawer.rows.push({id: "", images: false}); return render();
+    }
+    if (act === "provider-remove-row" && drawer && !drawer.busy && drawer.rows.length > 1) {
+      readProvider(); drawer.rows.splice(Number(b.getAttribute("data-index")), 1); return render();
+    }
     if (act === "new") { drawer = { mode: "new", busy: false, err: "" }; return render(); }
     if (act === "edit") { drawer = { mode: "edit", id: id, busy: false, err: "" }; return render(); }
-    if (act === "drawer-close") { drawer = null; return render(); }
+    if (act === "drawer-close") { if (drawer && drawer.busy) return; drawer = null; return render(); }
     if (act === "drawer-save") return saveDrawer();
     if (act === "pick") { sel = id; return render(); }
     if (act === "filter") { filter = b.getAttribute("data-v"); return renderIndex(); }
@@ -923,6 +1068,27 @@
   function onChange(e) {
     var t = e.target;
     if (!t) return;
+    if (drawer && drawer.mode === "provider" && !drawer.busy) {
+      if (t.id === "ai-provider-preset") {
+        var p = PROVIDER_PRESETS[t.value];
+        if (!p) return;
+        if (drawer.key && !window.confirm("更换服务商预设将清空尚未保存的 Key。继续？")) { t.value = drawer.preset; return; }
+        drawer.preset = t.value; drawer.name = p.name; drawer.pid = p.id; drawer.style = p.style;
+        drawer.url = p.url; drawer.key = ""; drawer.found = []; drawer.err = "";
+        drawer.rows = [{id: "", images: false}]; return render();
+      }
+      if (t.id === "ai-provider-protocol") { readProvider(); drawer.found = []; return render(); }
+      if (t.id === "ai-provider-found" && t.value && drawer.rows.length <= 40) {
+        var found = t.value;
+        readProvider();
+        if (!drawer.rows.some(function (row) { return row.id === found; })) {
+          var blank = drawer.rows.find(function (row) { return !row.id.trim(); });
+          if (blank) blank.id = found;
+          else if (drawer.rows.length < 40) drawer.rows.push({id: found, images: false});
+        }
+        return render();
+      }
+    }
     if (t.id === "ai-default") { draft.model = t.value; return render(); }
     if (t.id === "ai-enabled") {
       if (!t.checked) { t.checked = true; return askDisable(); }
@@ -938,6 +1104,8 @@
   }
 
   function onInput(e) {
+    if (drawer && drawer.mode === "provider" && !drawer.busy && e.target &&
+        (e.target.id || "").indexOf("ai-provider-") === 0) readProvider();
     if (e.target && e.target.id === "ai-q") { q = e.target.value; return renderIndex(); }
   }
 
@@ -983,7 +1151,7 @@
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
     if (confirmBox) { confirmBox = null; render(); return; }
-    if (drawer) { drawer = null; render(); }
+    if (drawer && !drawer.busy) { drawer = null; render(); }
   });
 
   /* ───────────── 对外 ───────────── */

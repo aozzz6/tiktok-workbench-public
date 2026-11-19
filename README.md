@@ -149,7 +149,7 @@ What the package can and cannot do, stated plainly:
 - **Works offline:** importing a **local video** and extracting its frames, viewing the
   ledger, benchmark analysis, and transcription (the full ZIP carries the model; it runs
   on the CPU with int8 — a GPU path exists but is unverified, see `qa/gaps.md`).
-- **Needs internet and your own API key** (put it in through the **AI 接入 → ＋ 新增模型**
+- **Needs internet and your own API key** (put it in through the **AI 接入 → 添加模型服务商**
   page, which writes `workbuddy\models.json`): AI translation, AI chat, and the
   **reverse-engineering report** — that one runs a **remote vision model**, so it is
   *not* offline.

@@ -124,7 +124,7 @@ for %f in (packaging\tests\*.test.py) do @(webapp\.venv\Scripts\python.exe "%f" 
 
 - **离线可用**：**导入本地视频 + 抽帧**、看台账、对标分析、转写（完整包连模型都随包带着；
   转写走 CPU int8，GPU 路线存在但未验证，见 `qa/gaps.md`）。
-- **需要联网 + 你自己的 API key**（在页面「AI 接入 → ＋ 新增模型」里填，页面会自己写
+- **需要联网 + 你自己的 API key**（在页面「AI 接入 → 添加模型服务商」里填，页面会自己写
   `workbuddy\models.json`）：AI 翻译、AI 对话、**出反推报告**。反推报告要调用远程的
   「视觉模型」看画面，所以**它不能离线**。
 - **粘贴 TikTok 链接在这个版本里不会下载**：包里那个下载组件写死了开发机的 Python 路径，
