@@ -55,6 +55,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -708,6 +709,9 @@ def extract_products(accs: list[dict], log: Log) -> dict:
     ★ 现行 /api/run 在 steps 含 s2/s5 时会自动追加 s5b_products（app.py:330-335），
       所以正常情况下这里全部跳过；本层只补 s5b 没覆盖到的历史漏跑与失败账号。
     """
+    cfg = _read_json(ACCOUNTS_JSON, {})
+    xlsx = cfg.get("xlsx") if isinstance(cfg, dict) else None
+    ledger_dir = Path(xlsx).parent if xlsx else Path(os.environ.get("WB_LEDGER_DIR") or PIPE_DIR.parent / "ledger")
     out: dict[str, dict] = {}
     for a in accs:
         if a.get("media_type") == "image":
@@ -717,7 +721,7 @@ def extract_products(accs: list[dict], log: Log) -> dict:
         name = a["account"]
         out_dir = Path(a.get("out_dir") or PIPE_DIR / "output")
         scrape = out_dir / f"scrape_{name}.json"
-        aux = Path(r"D:/1/对标账号") / name
+        aux = ledger_dir / name
         target = aux / f"{name}_products.json"
         ids = [str(i["id"]) for i in (_read_json(scrape, {}).get("items") or []) if i.get("id")]
         have = _read_json(target, {})
@@ -920,8 +924,10 @@ def main() -> int:
     today = a.date or dt.date.today().isoformat()
     date_from = (dt.date.fromisoformat(today) - dt.timedelta(days=a.days)).isoformat()
     # round_id 必带毫秒：同进程同一秒内可能连跑两轮（子集补跑紧跟整轮），纯秒级会撞车
-    round_id = (f"{dt.datetime.fromtimestamp(started_at).strftime('%Y%m%dT%H%M%S')}"
-                f"_{int(started_at * 1000) % 1000:03d}_{os.getpid()}")
+    round_id = R.new_round_id(started_at=started_at)
+    run_id = os.environ.get("WB_DAILY_RUN_ID", "")
+    if re.fullmatch(r"[0-9a-f]{12}", run_id):
+        round_id += "-" + run_id
     kind = "partial" if a.accounts else "full"
     report_dir = REPORTS_DIR / today
     log = Log(REPORTS_DIR / f"auto_{today}.log")

@@ -8,9 +8,7 @@
   - 一键修复 + AI 诊断（只决策不执行）
   - 转交 Agent：POST /api/handoff 生成交接指令（由「自动化流程 · 指令」按钮调用）
 
-★ 2026-10-24（D1-A）已下线四个页面与接口：报表与台账（/api/reports*）、
-  定时自动运行（/api/schedule*）、爆品监控（/api/hot/*）、转交 Agent 页面
-  （/api/skills + GET /api/handoff）。scheduler 模块与 hot_product_monitor 脚本保留。
+  - 每日更新：设置本机执行时间、账号范围，查看最近一次定时任务的结果
 """
 from __future__ import annotations
 
@@ -24,6 +22,7 @@ import sys
 import threading
 import tempfile
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -44,7 +43,18 @@ import tk_reverse
 import prompt_optimizer
 import reverse_voice
 
-app = FastAPI(title="TikTok 对标工作台", version="1.0.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    stop = threading.Event()
+    worker = scheduler.start_background(stop)
+    try:
+        yield
+    finally:
+        stop.set()
+        worker.join(timeout=2)
+
+
+app = FastAPI(title="TikTok 对标工作台", version="1.0.0", lifespan=lifespan)
 app.include_router(prompt_optimizer.router)
 app.include_router(reverse_voice.router)
 
@@ -53,8 +63,8 @@ app.include_router(reverse_voice.router)
 # 只要新增/改动了启动器必须依赖的路由，就把版本 +1 并把能力写进 FEATURES。
 #   1 = 无 /api/repair/*、/api/ai/*（2026-10-24 之前的进程）
 #   2 = 一键修复 + AI 接入（2026-10-24）
-API_VERSION = 4
-API_FEATURES = ("repair", "ai", "prompt_optimizer", "reverse_voice")
+API_VERSION = 6
+API_FEATURES = ("repair", "ai", "prompt_optimizer", "reverse_voice", "schedule")
 
 
 @app.exception_handler(account_groups.GroupStorageError)
@@ -1936,11 +1946,21 @@ def ledger_open(payload: dict, request: Request) -> dict:
     return _open_in_excel(lp, sheet)
 
 
-# ────────────────────────── 定时（已下线）──────────────────────────
-# ★ 2026-10-24（D1-A）：定时自动运行菜单下线 → /api/schedule（GET/POST）与
-#   /api/schedule/trigger 删除。scheduler 模块保留：/api/run?kind=daily 仍用它
-#   校验账号名单，daily_batch/自动化也共用 build_daily_cmd。真正的日更入口是
-#   pipeline/scripts/daily_batch.py（唯一回执契约）。
+# ────────────────────────── 每日更新 ──────────────────────────
+@app.get("/api/schedule")
+def get_schedule() -> dict:
+    return scheduler.status()
+
+
+@app.post("/api/schedule")
+def set_schedule(payload: dict, request: Request) -> dict:
+    _guard_local_write(request)
+    try:
+        scheduler.save(payload)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    _overview_cache.update(ts=0.0, data=None)
+    return scheduler.status()
 
 
 # ────────────────────────── 无人值守 · 待接管（方案五）──────────────────────────
@@ -3455,10 +3475,6 @@ def _port_free(port: int) -> bool:
 
 if __name__ == "__main__":
     import uvicorn
-    _swept = store.sweep_stale_running()
-    if _swept:
-        print(f"[startup] 清扫僵尸运行记录 {_swept} 条 -> interrupted", flush=True)
-    scheduler.start_background()
     _port = _listen_port()
     print(f"[startup] 监听 http://127.0.0.1:{_port}", flush=True)
     if not _port_free(_port):
@@ -3466,6 +3482,9 @@ if __name__ == "__main__":
               f"[startup] 换端口启动：在命令行先 set WB_PORT=8789 再跑，"
               f"或双击 启动工作台服务_8789.lnk。", flush=True)
         raise SystemExit(1)
+    _swept = store.sweep_stale_running()
+    if _swept:
+        print(f"[startup] 清扫僵尸运行记录 {_swept} 条 -> interrupted", flush=True)
     try:
         uvicorn.run(app, host="127.0.0.1", port=_port, log_level="info")
     except OSError as exc:                       # 探测到真正绑定之间仍可能被抢

@@ -29,6 +29,8 @@ pipeline/gate_report.json
 webapp/data/
 runs*.jsonl
 uid_cache.json
+.uid_cache.json
+.secuid_cache.json
 *.db
 *.sqlite*
 *.xlsx

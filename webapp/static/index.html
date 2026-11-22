@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="/static/style.v2.css?v=20261022B" />
 <link rel="stylesheet" href="/static/tablekit.css?v=20261022B" />
 <link rel="stylesheet" href="/static/style.v3.css?v=20261022B" />
+<link rel="stylesheet" href="/static/daily_schedule.css?v=1.2.0" />
 <link rel="stylesheet" href="/static/prompt_optimizer.css?v=20261027SC1" />
 <link rel="stylesheet" href="/static/accounts_s236.css?v=20261028A" />
 <link rel="stylesheet" href="/static/paper-ai.css?v=20261028B" />
@@ -43,6 +44,7 @@
       <a class="nav-item" data-view="accounts" href="#accounts"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="5.2" r="2.2"/><path d="M2.6 13c0-2.1 1.5-3.4 3.4-3.4S9.4 10.9 9.4 13"/><path d="M10.9 4.4a2 2 0 010 3.8M12.1 9.7c1.3.3 2.1 1.5 2.1 3.3"/></svg>账号管理</a>
             <a class="nav-item" data-view="run" href="#run"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3.2v9.6l8-4.8z"/></svg>一键运行<span id="tk-nav-badge" class="nav-badge hidden" title="待接管账号数">0</span></a>
       <a class="nav-item" data-view="aiconf" href="#aiconf"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.9" cy="11.1" r="2.5"/><path d="M6.7 9.3L12.6 3.4M10.6 2.6l2.8 2.8M8.8 4.4l2.8 2.8"/></svg>AI 接入</a>
+      <a class="nav-item" data-view="schedule" href="#schedule"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.8"/><path d="M8 4.6v3.7l2.5 1.5"/></svg>每日更新</a>
     </nav>
     <div class="side-foot">
       <div id="health-dot" class="dot"></div>
@@ -249,6 +251,37 @@
     </section>
 
 <!-- ── 一键运行 ── -->
+    <section id="view-schedule" class="view">
+      <header class="page-head"><div><h1>每日更新</h1>
+        <p class="page-sub">按这台电脑的本地时间，自动采集对标账号的增量数据。</p>
+      </div></header>
+      <div class="schedule-layout">
+        <section class="panel">
+          <h2>定时设置</h2>
+          <form id="schedule-form">
+            <fieldset id="schedule-fields" disabled>
+              <label class="chk"><input type="checkbox" id="schedule-enabled"> 启用每日更新</label>
+              <label class="schedule-field">执行时间 <input type="time" id="schedule-time" required value="09:30"></label>
+              <label class="schedule-field">更新范围
+                <select id="schedule-scope"><option value="all">全部已启用账号</option><option value="selected">指定账号</option></select>
+              </label>
+              <fieldset id="schedule-accounts" hidden><legend>选择账号</legend><div id="schedule-choices"></div></fieldset>
+              <p class="muted">工作台服务需保持运行，浏览器可以关闭。错过设定时间后，当天启动工作台会自动补跑。</p>
+              <button type="submit" class="btn primary">保存设置</button>
+            </fieldset>
+          </form>
+          <p id="schedule-message" role="status"></p>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>运行状态</h2><button id="schedule-refresh" class="btn ghost sm" type="button">刷新</button></div>
+          <dl><dt>下次更新</dt><dd id="schedule-next">正在读取…</dd>
+              <dt>生效范围</dt><dd id="schedule-targets">—</dd>
+              <dt>上次定时任务</dt><dd id="schedule-last">—</dd></dl>
+          <p class="muted" id="schedule-waiting" role="status"></p>
+        </section>
+      </div>
+    </section>
+
     <section id="view-run" class="view">
       <header class="page-head">
         <h1>一键运行</h1>
@@ -477,7 +510,8 @@
   <script src="/static/bench_s096.js?v=20261028S96"></script>
   <script src="/static/tablekit.js?v=20261022B"></script>
 <script src="/static/accounts_s236.js?v=20261028A"></script>
-<script src="/static/app.js?v=20261028C"></script>
+<script src="/static/daily_schedule.js?v=1.2.0"></script>
+<script src="/static/app.js?v=20261123A"></script>
 <script src="/static/ai_admin.js?v=20261028B"></script>
 <script src="/static/reverse_voice.js?v=20261027Q"></script>
 <script src="/static/reverse.js?v=20261027Q"></script>

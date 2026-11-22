@@ -435,6 +435,8 @@ class RunManager:
           仍然 pop 掉继承来的脏值，防伪造语义不变。
         """
         env = config.run_env()
+        if run.kind == "daily":
+            env["WB_DAILY_RUN_ID"] = run.id
         if run.lease:
             env[config.LEASE_ENV] = run.lease
         else:

@@ -17,9 +17,13 @@ pages from TikTok, it can talk to services you configure:
 | Short text snippets | `translate.googleapis.com` | the `translate_pending.py` path |
 | Product / trend lookups | TikTok Ads (`ads.tiktok.com`) and other third-party sites | only when those product scripts are run |
 
-So: nothing is sent anywhere by merely having the workbench open — unless you turn on
-its built-in daily schedule (`webapp/data/schedule.json`, `enabled: true`), which then
-starts a daily batch by itself, scraping and translating on a timer.
+Enable **每日更新** in the sidebar to run the daily batch at a local time you choose.
+The default time is 09:30 and scheduling starts disabled on a new installation.
+Choose all enabled accounts to include newly added accounts automatically.
+Leave the computer awake and the workbench service running. The browser can be closed.
+Starting the service later that day runs a missed batch once. The same page shows the next
+scheduled time and the status of the last scheduled run. Scheduled runs use the configured
+scraping and translation services.
 
 > A note on words: this README calls the `webapp/` service the **dashboard**. Other
 > documents in this repository call it the **workbench** (`工作台`) — for example

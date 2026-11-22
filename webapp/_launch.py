@@ -90,8 +90,8 @@ _DIAG_KEYS = ("pipeline_dir", "ledger_files")
 # ★ 独立验收 R6：启动器以前只看 health 指纹，遇到旧进程就直接复用，于是
 #   「磁盘已是新代码、进程还是旧代码」永远不自愈，而页面提示却叫人双击这个启动器。
 #   现在 health 带 api_version/features；低于要求就明确提示用真正的重启入口。
-REQUIRED_API_VERSION = 2
-REQUIRED_FEATURES = ("repair", "ai")
+REQUIRED_API_VERSION = 6
+REQUIRED_FEATURES = ("repair", "ai", "schedule")
 
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -151,7 +151,7 @@ def api_status(data) -> tuple[bool, str]:
 def print_upgrade_hint(port: int, detail: str) -> None:
     """旧进程明确提示升级：给出真正的重启入口，而不是让人重复双击启动器。"""
     print(f"[launcher] 检测到 {port} 上运行的是**旧版工作台**：{detail}")
-    print("[launcher] 磁盘代码已更新，但运行中的进程还是旧的，所以 /api/repair/* 或 /api/ai/* 仍会 404。")
+    print("[launcher] 磁盘代码已更新，请重启工作台以加载新功能。")
     print("[launcher] 请运行下面这个真正的重启入口（会重启该端口的 python 进程，不影响别的程序）：")
     print(f'[launcher]     "{RESTART_BAT}" {port}')
     print("[launcher] 或双击桌面 work 目录下的「重启工作台.bat」。重启后再点一键修复即可。")

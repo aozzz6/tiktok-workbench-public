@@ -408,6 +408,8 @@ def _skip_entry(child: Path, *, top: bool, drop_names, drop_globs, drop_suffixes
     `webapp/static/prompt_v2/README.md` (code review).  `top` decides that.
     """
     name = child.name
+    if name in {".uid_cache.json", ".secuid_cache.json"}:
+        return True
     if top and name in drop_names:
         return True
     # __pycache__ is a cache, never content: excluded at every depth (contract §6).

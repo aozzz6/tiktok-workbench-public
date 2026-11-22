@@ -28,6 +28,7 @@ verify 是原自动化 prompt 第 5 步散文（curl + openpyxl 复读）的脚�
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import subprocess
 import sys
@@ -40,7 +41,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from desc_split import COL_NOTE, COL_NOTE_ZH  # noqa: E402  13 列口径（单一事实源）
 from build_ledger_15col import valid_header, _valid_img_header, vid_of
 
-PY = str(PIPE / ".venv" / "Scripts" / "python.exe")
+_venv_python = PIPE / ".venv" / "Scripts" / "python.exe"
+PY = os.environ.get("WB_PYTHON") or (str(_venv_python) if _venv_python.is_file() else sys.executable)
 BUILDER = PIPE / "scripts" / "build_ledger_15col.py"
 CFG_PATH = PIPE / "accounts.json"
 
@@ -100,7 +102,13 @@ def resolve_workbench_port(probe=None, candidates=PORT_CANDIDATES,
 
 
 def workbench_base(probe=None) -> str:
-    """工作台 base URL（无尾部斜杠），端口由 resolve_workbench_port 决定。"""
+    """日更子任务优先校验启动它的工作台。独立运行时探测候选端口。"""
+    base = (os.environ.get("WB_BASE") or "").strip().rstrip("/")
+    if base:
+        return base
+    port = os.environ.get("WB_PORT") or os.environ.get("PORT") or ""
+    if port.isdecimal() and 1024 <= int(port) <= 65535:
+        return f"http://127.0.0.1:{port}"
     return f"http://127.0.0.1:{resolve_workbench_port(probe)}"
 
 

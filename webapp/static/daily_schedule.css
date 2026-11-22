@@ -1,0 +1,24 @@
+#view-schedule .schedule-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(16rem, 2fr);
+  gap: 1rem;
+  max-width: 64rem;
+  align-items: start;
+}
+#view-schedule .panel { min-width: 0; padding: 1.35rem; }
+#view-schedule h2 { margin: 0 0 1rem; font-size: 1.15rem; }
+#view-schedule .panel-head h2 { margin: 0; }
+#schedule-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
+#view-schedule .schedule-field { display: grid; gap: .4rem; margin: 1rem 0; max-width: 20rem; }
+#view-schedule .schedule-field :is(select, input) { font: inherit; padding: .4rem .55rem; }
+#schedule-accounts { margin: .8rem 0; padding: .6rem .8rem; min-width: 0; }
+#schedule-choices { display: grid; gap: .4rem; max-height: 13rem; overflow: auto; }
+#schedule-choices label { overflow-wrap: anywhere; }
+#view-schedule dl { display: grid; gap: .45rem; margin: 1rem 0 0; }
+#view-schedule dt { color: var(--muted, #60584d); margin-top: .6rem; }
+#view-schedule dd { margin: 0; font-weight: 600; }
+#schedule-message:empty, #schedule-waiting:empty { display: none; }
+#schedule-message[data-error="true"] { color: #973b2c; }
+@media (max-width: 800px) {
+  #view-schedule .schedule-layout { grid-template-columns: 1fr; }
+}

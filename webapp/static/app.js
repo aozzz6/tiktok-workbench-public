@@ -170,6 +170,7 @@ function switchView(name) {
   if (name === "prompt" && window.PV2) window.PV2.mount();       // 提示词优化（T106 中控台）
   if (name === "bench") loadBench(true);
   if (name === "accounts") loadAccounts(true);
+  if (name === "schedule") window.dailySchedule?.refresh();
   if (name === "aiconf" && window.AIA) window.AIA.load();   // AI 接入（ai_admin.js）
 }
 
@@ -908,7 +909,6 @@ function fillAccountSelects() {
       });
     }
   }
-  // ★ 2026-10-24（D1-A）：定时页面已下线，不再填 #sc-accounts 的 chip 列表。
   //   原来这里无判空，页面删掉后会 TypeError 打断整个 boot（6 套 jsdom 用例因此红）。
   renderRunMultiAccounts();   // 多账户批跑选择区
 }
