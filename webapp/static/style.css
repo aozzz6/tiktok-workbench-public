@@ -747,6 +747,10 @@ details.adv .field{margin-bottom:10px}
 
 /* ─────────── 一键运行 · 失败分析卡（人话版） ─────────── */
 #fail-analysis{margin-top:12px}
+.account-issue-list{margin:8px 0;padding-left:20px;line-height:1.6}
+.account-issue-list li+li{margin-top:8px}
+.account-issue-list li div{color:var(--muted)}
+.account-issue-list a{text-decoration:underline}
 .fa-card{background:rgba(217,119,6,.06);border:1px solid rgba(217,119,6,.35);
   border-radius:10px;padding:14px 16px}
 .fa-title{font-size:13px;font-weight:700;color:var(--ink);margin-bottom:6px}

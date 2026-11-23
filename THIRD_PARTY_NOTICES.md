@@ -17,8 +17,8 @@ corresponds to them, are covered by the sections below.**
 | FFmpeg inside PyAV (`av.libs`) | `<pkg>\python\Lib\site-packages\av.libs\` | **GPLv3** (built with libx264/libx265) | `licenses\PYAV-FFMPEG-SOURCE.txt` |
 | Bundled Python packages | `<pkg>\python\Lib\site-packages\` | mixed: MIT / BSD / Apache-2.0 / LGPL / PSF | `licenses\PYTHON-PACKAGES.txt` + the kept `*.dist-info` |
 | Microsoft Visual C++ runtime DLLs | `<pkg>\python\` | Microsoft redistributable | this file, section "Microsoft Visual C++ runtime" |
-| DM Sans (Latin subset, WOFF2) | `webapp/static/fonts/dm-sans-latin.woff2` | SIL Open Font License 1.1 (`OFL-1.1`) | <https://openfontlicense.org/> — **exact wording still to be confirmed, see the TODO below** |
-| Apache ECharts (minified browser bundle) | `pipeline/assets/echarts.min.js` | Apache License 2.0 | <https://www.apache.org/licenses/LICENSE-2.0> |
+| DM Sans (Latin subset, WOFF2) | `webapp/static/fonts/dm-sans-latin.woff2` | SIL Open Font License 1.1 (`OFL-1.1`) | `licenses/dm-sans-OFL.txt` |
+| Apache ECharts (minified browser bundle) | `pipeline/assets/echarts.min.js` | Apache License 2.0 | `licenses/echarts-LICENSE.txt`, `licenses/echarts-NOTICE.txt` |
 
 ## `webapp/static/fonts/dm-sans-latin.woff2` — DM Sans, OFL-1.1
 
@@ -31,13 +31,8 @@ Loaded by `webapp/static/style.v2.css`:
 The SIL Open Font License 1.1 allows redistribution and embedding, but it requires
 the license text and the copyright notice to travel with the font.
 
-**TODO before the first public release**
-
-- The OFL-1.1 text is **not** reproduced in this repository, and it is not
-  paraphrased here on purpose: copy the authoritative text from
-  <https://openfontlicense.org/> (or from the upstream DM Sans release) into
-  `webapp/static/fonts/OFL.txt`, next to the font.
-- Fill in the exact copyright line from that upstream release in the table above.
+Copyright 2014 The DM Sans Project Authors. See the upstream license and
+copyright notice in `licenses/dm-sans-OFL.txt` (source: `packaging/licenses/`).
 
 ## `pipeline/assets/echarts.min.js` — Apache ECharts, Apache-2.0
 
@@ -53,11 +48,9 @@ or more contributor license agreements.  See the NOTICE file
 **Keep that header.** The bundle also contains an embedded
 `Copyright (c) Microsoft Corporation.` notice; keep that one too.
 
-**TODO before the first public release**
-
-- Ship the Apache-2.0 text with the distribution (for example as
-  `pipeline/assets/echarts-LICENSE.txt`), plus the upstream `NOTICE` file if the
-  ECharts release ships one — Apache-2.0 requires both to travel with the code.
+This is Apache ECharts 5.5.1. Its upstream license and notice ship in
+`licenses/echarts-LICENSE.txt` and `licenses/echarts-NOTICE.txt`
+(source: `packaging/licenses/`).
 
 ## ffmpeg CLI (`ffmpeg.exe`, `ffprobe.exe`) — GPLv3
 

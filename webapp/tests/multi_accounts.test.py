@@ -122,12 +122,14 @@ class MultiAccountsTest(unittest.TestCase):
         self.assertIn('[multi] (2/3) 账号: beta',r.stdout)
         self.assertIn('[multi] 全部账号完成',r.stdout)
 
-    def test_real_driver_fail_fast(self):
+    def test_real_driver_continues_after_failure(self):
         (self.root/'fail').touch()
-        r=self.execute(['alpha','beta','gamma'])
-        self.assertEqual(r.returncode,7)
-        self.assertEqual(self.events(),[['alpha','begin'],['alpha','end'],['beta','begin'],['beta','end']])
-        self.assertNotIn('全部账号完成',r.stdout)
+        result = self.execute(['alpha', 'beta', 'gamma'])
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(self.events(), [[account, event] for account in ('alpha', 'beta', 'gamma')
+                                         for event in ('begin', 'end')])
+        self.assertIn('[multi-success] alpha,gamma', result.stdout)
+        self.assertNotIn('全部账号完成', result.stdout)
 
     def test_cancel_before_spawn(self):
         manager=runner.RunManager()
@@ -163,10 +165,22 @@ class MultiAccountsTest(unittest.TestCase):
         finally:
             if run.proc and run.proc.poll() is None: manager.stop(run.id)
 
-    def test_failed_batch_does_not_write_ledger(self):
-        run=SimpleNamespace(kind='pipeline',status='failed',title='fixture',id='fixture',account='alpha,beta')
-        with patch.object(app,'_start_ledger_sync') as sync: app._auto_ledger_sync(run)
+    def test_failed_batch_without_successes_does_not_write_ledger(self):
+        run = SimpleNamespace(kind='pipeline', status='failed', title='fixture', id='fixture',
+                              account='alpha,beta', lines=[{'text': '[multi-success] '}])
+        with patch.object(app, '_start_ledger_sync') as sync:
+            app._auto_ledger_sync(run)
         sync.assert_not_called()
+
+    def test_partial_failure_syncs_only_completed_accounts(self):
+        run = SimpleNamespace(kind='pipeline', status='failed', title='fixture', id='fixture',
+                              account='alpha,beta,gamma', lines=[
+                                  {'text': '[multi-success] alpha,gamma'},
+                                  {'text': '[进程退出] exit_code=7'},
+                              ])
+        with patch.object(app, '_start_ledger_sync') as sync:
+            app._auto_ledger_sync(run)
+        sync.assert_called_once_with('fixture', 'alpha,gamma', False)
 
 
 if __name__=='__main__': unittest.main(verbosity=2)

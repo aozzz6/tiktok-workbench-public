@@ -290,7 +290,7 @@
 
 /* 失败分析空态 */
 #view-run .rv2-fa-empty { margin: 0; font-size: 10.5px; color: var(--muted); line-height: 1.6; }
-#view-run #rv2-failbody:not(.is-empty) .rv2-fa-empty { display: none; }
+#view-run #fail-analysis:not(.hidden) ~ .rv2-fa-empty { display: none; }
 
 /* 「翻译回填」独立开关：小胶囊，靠右，不与步骤方块混在一起 */
 #view-run #run-steps .chip.tb-only {

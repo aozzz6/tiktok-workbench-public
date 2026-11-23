@@ -111,6 +111,12 @@ def _child_env(env: dict | None = None) -> dict:
     return child
 
 
+def _forward_account_issue(stderr: str) -> None:
+    for line in stderr.splitlines():
+        if line.startswith("[account-issue] "):
+            print(line, flush=True)
+
+
 def _subprocess_step(step: str, cmd: list[str], env: dict | None = None) -> tuple[bool, str]:
     """跑外部脚本，解析 stdout 末尾的 JSON 产物行（约定脚本最后一行输出 JSON 摘要）。
 
@@ -123,6 +129,7 @@ def _subprocess_step(step: str, cmd: list[str], env: dict | None = None) -> tupl
     proc = subprocess.run(cmd, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", env=_child_env(env))
     if proc.returncode != 0:
+        _forward_account_issue(proc.stderr)
         return False, f"exit={proc.returncode} stderr={proc.stderr[-300:]}"
     for line in reversed(proc.stdout.strip().splitlines()):
         line = line.strip()
@@ -214,6 +221,7 @@ def _scrape_image(a, script: str, out_dir: Path) -> tuple[bool, str]:
                     "--from", a.date_from, "--to", a.date_to],
                    capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
+        _forward_account_issue(proc.stderr)
         return False, f"图文枚举失败 exit={proc.returncode}: {(proc.stderr or proc.stdout or '')[-300:]}"
     ids: list[str] = []
     result = None
@@ -422,7 +430,7 @@ def _exec_step(name: str, fn, args) -> tuple[bool, str, float]:
     return ok, detail, round(time.time() - t0, 1)
 
 
-def _bookkeep(name: str, ok: bool, detail: str, cost: float, state: dict) -> bool:
+def _bookkeep(name: str, ok: bool, detail: str, cost: float, args, state: dict) -> bool:
     """写 state + 跑门禁 + 记日志（★必须在主线程串行调用：gate_report.json 是共享文件）。"""
     gate_note = ""
     if ok and name in GATE_MAP:
@@ -435,31 +443,26 @@ def _bookkeep(name: str, ok: bool, detail: str, cost: float, state: dict) -> boo
         except (ValueError, IndexError):
             ok, gate_note = False, " | 门禁:产物非 JSON，无法校验"
 
-    state[f"{_current_account}|{name}"] = {"ok": ok, "detail": detail[:500], "cost_s": cost}
+    state[f"{args.account}|{name}"] = {
+        "ok": ok, "detail": detail[:500], "cost_s": cost,
+        "date_range": [args.date_from, args.date_to],
+    }
     save_state(state)
     log(name, f"ok={ok} cost={cost}s{gate_note} | {detail[:160]}")
     return ok
 
 
-_current_account = ""   # 由 main() 设置：state key 需要账号前缀（多账号连续跑防串号）
+def _step_complete(name: str, args, state: dict) -> bool:
+    record = state.get(f"{args.account}|{name}", {})
+    return bool(record.get("ok") and record.get("date_range") == [args.date_from, args.date_to])
 
 
 def run_step(name: str, fn, args, state: dict) -> bool:
-    # v3（2026-10-03）：state key 加账号前缀——原实现只有步骤名，多账号连续跑会
-    # 把 A 账号的"已完成"误当成 B 账号的（vivi 跑完后 kee 全步骤被误跳的风险）
-    skey = f"{args.account}|{name}"
-    rec = state.get(skey, {})
-    image_scrape = _is_image(args) and name == "s2_scrape"
-    window = [args.date_from, args.date_to] if image_scrape else None
-    if rec.get("ok") and (not image_scrape or rec.get("date_range") == window):
-        log(name, f"已完成，跳过（断点续跑）cost={rec.get('cost_s')}s")
+    if _step_complete(name, args, state):
+        record = state[f"{args.account}|{name}"]
+        log(name, f"已完成，跳过（断点续跑）cost={record.get('cost_s')}s")
         return True
-    ok, detail, cost = _exec_step(name, fn, args)
-    result = _bookkeep(name, ok, detail, cost, state)
-    if image_scrape:
-        state[skey]["date_range"] = window
-        save_state(state)
-    return result
+    return _bookkeep(name, *_exec_step(name, fn, args), args, state)
 
 
 def run_step_pair(pair: list[str], args, state: dict) -> bool:
@@ -472,7 +475,7 @@ def run_step_pair(pair: list[str], args, state: dict) -> bool:
 
     门禁仍串行执行：gate_report.json 是共享文件，两个步骤同时写会互相覆盖。
     """
-    todo = [n for n in pair if not state.get(f"{args.account}|{n}", {}).get("ok")]
+    todo = [n for n in pair if not _step_complete(n, args, state)]
     for n in pair:
         if n not in todo:
             log(n, f"已完成，跳过（断点续跑）cost={state[f'{args.account}|{n}'].get('cost_s')}s")
@@ -493,7 +496,7 @@ def run_step_pair(pair: list[str], args, state: dict) -> bool:
     ok_all = True
     for n in pair:                       # 按声明顺序串行落账/跑门禁（保证 gate_report 不竞争）
         if n in results:
-            ok_all &= _bookkeep(n, *results[n], state)
+            ok_all &= _bookkeep(n, *results[n], args, state)
     return ok_all
 
 
@@ -537,9 +540,10 @@ def main() -> int:
         CFG["out_dir"] = a.out_dir
 
     log("START", f"account={a.account} range={a.date_from}~{a.date_to} xlsx={a.xlsx}")
-    global _current_account
-    _current_account = a.account
-    state = {} if a.no_resume else load_state()
+    state = load_state()
+    if a.no_resume:
+        prefix = f"{a.account}|"
+        state = {key: value for key, value in state.items() if not key.startswith(prefix)}
     order = a.steps or ORDER
 
     # Step1 → Step2 串行执行：s2 的视频 ID 由 s1 音频产物文件名推导，存在真实数据依赖。
@@ -569,7 +573,7 @@ def main() -> int:
                 continue
             if [remaining[head + k] for k in range(len(pair))] != members:
                 continue                                    # 不相邻
-            done = [n for n in pair if state.get(f"{a.account}|{n}", {}).get("ok")]
+            done = [n for n in pair if _step_complete(n, a, state)]
             if len(done) < len(pair):                       # 全部已完成 → 走串行跳过逻辑
                 return members
         return None

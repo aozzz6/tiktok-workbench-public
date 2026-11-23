@@ -667,28 +667,34 @@ def _multi_title(p: dict, accounts: list[str]) -> str:
             + ("、".join(accounts[:6]) + ("…" if len(accounts) > 6 else "")))
 
 
-def _build_multi_pipeline_cmd(p: dict, accounts: list[str]) -> list[str]:
-    """多账户批跑：对每个账号复用单账号校验+命令构造（含 s5b 自动补、lang 推断），
-    包在一个 python 驱动里顺序串行执行 → 单任务/单日志流/单进度面板。
+_MULTI_SUCCESS_PREFIX = "[multi-success] "
 
-    顺序而非并发：转写占 GPU/模型，并发会互相抢资源且日志交织难读；
-    串行让每个账号完整跑完再下一个，某账号失败即整链停（与单账号 fail-fast 同语义）。
-    """
+
+def _build_multi_pipeline_cmd(p: dict, accounts: list[str]) -> list[str]:
+    """逐个运行账号，保留每个账号的结果，并避免并发转写抢占资源。"""
     per_cmds = [_build_pipeline_cmd({**p, "account": acc}) for acc in accounts]
     driver = (
         "import subprocess, sys\n"
         "cmds = " + repr(per_cmds) + "\n"
         "accounts = " + repr(accounts) + "\n"
-        "for i, c in enumerate(cmds, 1):\n"
-        "    print(f'[multi] ({i}/{len(cmds)}) 账号: ' + accounts[i-1], flush=True)\n"
-        "    r = subprocess.run(c)\n"
-        "    if r.returncode != 0:\n"
-        "        print(f'[multi] 第 {i}/{len(cmds)} 个账号失败 rc={r.returncode}，停止后续', flush=True)\n"
-        "        sys.exit(r.returncode)\n"
-        "print('[multi] 全部账号完成', flush=True)\n"
+        "completed = []\n"
+        "first_failure = 0\n"
+        "for i, (account, cmd) in enumerate(zip(accounts, cmds), 1):\n"
+        "    print(f'[multi] ({i}/{len(cmds)}) 账号: {account}', flush=True)\n"
+        "    result = subprocess.run(cmd)\n"
+        "    if result.returncode == 0:\n"
+        "        completed.append(account)\n"
+        "    else:\n"
+        "        first_failure = first_failure or result.returncode\n"
+        "        print(f'[multi] @{account} 失败 rc={result.returncode}，继续处理其他账号', flush=True)\n"
+        "failed = len(cmds) - len(completed)\n"
+        "if not failed:\n"
+        "    print('[multi] 全部账号完成', flush=True)\n"
+        "print(f'[multi] 执行结束：成功 {len(completed)}，失败 {failed}', flush=True)\n"
+        f"print({_MULTI_SUCCESS_PREFIX!r} + ','.join(completed), flush=True)\n"
+        "sys.exit(first_failure)\n"
     )
     return [config.python_exe(), "-c", driver]
-
 
 # 2026-10-15 更新：本地步骤完成后由 _auto_ledger_sync 自动触发台账同步，
 # 提示只保留仍需 Agent 侧补齐的部分（新账号建表 / 中文翻译 / 回填）。
@@ -759,10 +765,22 @@ runner.RESOURCES.on_release(_drain_ledger_queue)
 
 def _auto_ledger_sync(run) -> None:
     global _LEDGER_SYNC_ACTIVE
-    if run.kind not in {"pipeline", "daily"} or run.status != "done":
+    if run.kind not in {"pipeline", "daily"} or "台账同步" in run.title:
         return
-    if "台账同步" in run.title:  # 防自我套娃
-        return
+    account = run.account
+    if run.status != "done":
+        if run.kind != "pipeline" or run.status != "failed" or "," not in account:
+            _TRANS_BACKFILL_RUNS.pop(run.id, None)
+            return
+        # 批量任务仍显示失败，只把已完整跑通的账号交给台账同步。
+        finished = next((line["text"][len(_MULTI_SUCCESS_PREFIX):]
+                         for line in reversed(run.lines[-2:])
+                         if line["text"].startswith(_MULTI_SUCCESS_PREFIX)), "")
+        selected = set(account.split(","))
+        account = ",".join(name for name in finished.split(",") if name in selected)
+        if not account:
+            _TRANS_BACKFILL_RUNS.pop(run.id, None)
+            return
     # 若源 pipeline run 勾选了「翻译回填」，在台账同步 run 标题上打标，
     # 让 _on_ledger_sync_done 完成后衔接翻译（巡检下一拍立即翻，不等 15 分钟）。
     translate_backfill = _TRANS_BACKFILL_RUNS.pop(run.id, False)
@@ -770,13 +788,13 @@ def _auto_ledger_sync(run) -> None:
         ledger_running = any(r.get("kind") == "ledger"
                              for r in runner.MANAGER.running())
         if _LEDGER_SYNC_ACTIVE or _trans_running or ledger_running:
-            _LEDGER_SYNC_QUEUE.append({"title": run.title, "account": run.account,
+            _LEDGER_SYNC_QUEUE.append({"title": run.title, "account": account,
                                        "translate_backfill": translate_backfill})
             print(f"[ledger] 已有台账同步运行，排队等待：{run.title}", flush=True)
             return
         if translate_backfill:
             print(f"[trans-backfill] 本 run 勾选翻译回填，台账同步完成后衔接翻译", flush=True)
-        _start_ledger_sync(run.title, run.account, translate_backfill)
+        _start_ledger_sync(run.title, account, translate_backfill)
 
 
 runner.MANAGER.add_finish_hook(_auto_ledger_sync)
@@ -1295,7 +1313,7 @@ def _history_stream(row: dict):
     """历史运行没有日志可推：发一条 done 事件后结束（前端据此收尾，不再 404）。"""
     def gen():
         yield _sse({"status": row.get("status"), "exit_code": row.get("exit_code"),
-                    "done": True})
+                    "account_issues": row.get("account_issues") or [], "done": True})
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -1333,6 +1351,7 @@ def stream_run(run_id: str, since: int = 0):
             for item in runner.MANAGER.lines(run_id, since):
                 yield _sse({"line": item})
             yield _sse({"status": r.status, "exit_code": r.exit_code,
+                        "account_issues": list(r.account_issues.copy().values()),
                         "done": r.status != "running"})
             if r.status != "running":
                 return
@@ -1343,7 +1362,8 @@ def stream_run(run_id: str, since: int = 0):
                     yield ": keepalive\n\n"
                     continue
                 if item.get("done"):
-                    yield _sse({"status": item["status"], "exit_code": item["exit_code"], "done": True})
+                    yield _sse({"status": item["status"], "exit_code": item["exit_code"],
+                                "account_issues": list(r.account_issues.copy().values()), "done": True})
                     break
                 yield _sse({"line": item})
         finally:

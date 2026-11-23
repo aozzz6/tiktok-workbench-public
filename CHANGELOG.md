@@ -3,6 +3,12 @@
 All notable changes to this workbench are recorded here, newest first.
 Entries carry the date; since `0.1.0` they also carry the `VERSION` number.
 
+## 1.3.1 · 2026-11-23 · Account collection reliability
+
+- Continue manual multi-account runs after an account fails; keep the failed run status and sync only completed accounts to their ledgers.
+- Resume collection steps only for matching accounts and date ranges; daily refreshes rerun the collection steps.
+- Show unavailable/private profile diagnostics for video and image collection in run details, history and daily updates. TikTok status 209002 means profile details were not returned, not that a ban was confirmed.
+
 ## 1.1.0 — 2026-11-05 — Portable green build: 两个 ZIP（完整 full / 精简 slim）, no bundled LLM key, no PyTorch in the package
 
 ### Added

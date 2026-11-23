@@ -245,7 +245,7 @@ class ImageLedgerTest(unittest.TestCase):
         info={'entries':[None,{'id':int(VID)},{'id':VID},{'other':1}]}
         ydl=Mock();ydl.__enter__=Mock(return_value=ydl);ydl.__exit__=Mock(return_value=False)
         ydl.extract_info.return_value=info
-        with patch.dict(sys.modules,{'tk_audio_download':SimpleNamespace(resolve_uid=lambda a:'fixture'),
+        with patch.dict(sys.modules,{'tk_audio_download':SimpleNamespace(resolve_uid=lambda a:'fixture', load_secuid=lambda a:'fixture'),
                                     'yt_dlp':SimpleNamespace(YoutubeDL=lambda opts:ydl)}):
             self.assertEqual(enum.enumerate_recent('photoacc',40),[VID])
     def test_empty_sync_scope_cannot_expand_to_all_accounts(self):
@@ -260,7 +260,7 @@ class ImageLedgerTest(unittest.TestCase):
         ydl=Mock();ydl.__enter__=Mock(return_value=ydl);ydl.__exit__=Mock(return_value=False)
         ydl.extract_info.return_value={'entries':entries}
         factory=Mock(return_value=ydl)
-        return factory,patch.dict(sys.modules,{'tk_audio_download':SimpleNamespace(resolve_uid=lambda a:'fixture'),
+        return factory,patch.dict(sys.modules,{'tk_audio_download':SimpleNamespace(resolve_uid=lambda a:'fixture', load_secuid=lambda a:'fixture'),
                                              'yt_dlp':SimpleNamespace(YoutubeDL=factory)})
     def test_date_enumeration_includes_gmt8_boundaries_and_ignores_40_limit(self):
         tz=dt.timezone(dt.timedelta(hours=8))
@@ -298,15 +298,15 @@ class ImageLedgerTest(unittest.TestCase):
         with patch.object(pipe.subprocess,'run',return_value=self.proc({'ids':[]})):
             ok,detail=pipe._scrape_image(self.args,'fixture',self.root)
         state={}
-        with patch.object(pipe,'PIPE_DIR',self.root),patch.object(pipe,'_current_account','photoacc'):
-            self.assertTrue(pipe._bookkeep('s2_scrape',ok,detail,0,state))
+        with patch.object(pipe, 'PIPE_DIR', self.root), patch.object(pipe, 'STATE_FILE', self.root/'state.json'):
+            self.assertTrue(pipe._bookkeep('s2_scrape', ok, detail, 0, self.args, state))
         self.assertEqual(json.loads((self.root/'scrape_photoacc.json').read_text())['items'],[])
         from gate import gate_scrape
         self.assertFalse(gate_scrape({'items':[],'errors':[]})[0])
     def test_image_scrape_does_not_resume_a_different_date_range(self):
         state={'photoacc|s2_scrape':{'ok':True,'date_range':['2026-10-01','2026-10-02']}}
         fn=Mock(return_value=(True,json.dumps({'items':[{'id':VID,'publish_time_gmt8':'2026-10-17 01:00:00'}]})))
-        with patch.object(pipe,'_current_account','photoacc'),patch.object(pipe,'run_gates',return_value=True):
+        with patch.object(pipe, 'STATE_FILE', self.root/'state.json'), patch.object(pipe, 'run_gates', return_value=True):
             self.assertTrue(pipe.run_step('s2_scrape',fn,self.args,state))
         fn.assert_called_once()
         self.assertEqual(state['photoacc|s2_scrape']['date_range'],['2026-10-16','2026-10-17'])

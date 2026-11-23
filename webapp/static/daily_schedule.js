@@ -61,6 +61,13 @@
       ? data.last_run + " · " + outcome
       : "暂无定时运行记录";
     field("waiting").textContent = data.waiting || "";
+    const issues = field("issues");
+    const markup = accountIssueMarkup(result?.account_issues);
+    if (issues.dataset.markup !== markup) {
+      issues.innerHTML = markup ? "<h3>账号失败原因</h3>" + markup : "";
+      issues.hidden = !markup;
+      issues.dataset.markup = markup;
+    }
   }
 
   async function refresh() {

@@ -180,7 +180,7 @@ def status() -> dict:
         live = runner.MANAGER.get(cfg["last_run_id"])
         row = live.snapshot() if live else _scheduled_history(run_id=cfg["last_run_id"])
         if row:
-            result = {k: row.get(k) for k in ("id", "status", "started_at", "exit_code")}
+            result = {k: row.get(k) for k in ("id", "status", "started_at", "exit_code", "account_issues")}
             result.update(_round_result(cfg["last_run"], cfg["last_run_id"]))
     return {**cfg, "eligible_accounts": eligible, "target_count": len(targets),
             "next_at": next_at, "waiting": waiting, "last_result": result}

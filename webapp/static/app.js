@@ -1833,7 +1833,13 @@ async function submitRun() {
     buildRunProgress(daily ? ["daily"] : (payload.steps || ["s1_download", "s2_scrape", "s5_transcribe"]));
     attachRun(run.id, run.agent_pending_note, daily ? "daily" : "pipeline");
   } catch (e) {
-    toast("启动失败: " + e.message);
+    const raw = e.message;
+    let detail = raw;
+    try {
+      const parsed = JSON.parse(raw.slice(raw.indexOf("{")));
+      if (typeof parsed.detail === "string") detail = parsed.detail;
+    } catch (_) { /* 保留普通错误提示 */ }
+    toast("启动失败：" + detail, "error");
   } finally {
     runSubmitting = false;
   }
@@ -1878,6 +1884,12 @@ function attachRun(id, note, kind) {
   // P1-4：记到 sessionStorage，刷新后能认出"这是我刚才在跑的那个任务"
   try { sessionStorage.setItem("wb.runId", id); } catch (_) { /* 隐私模式 */ }
   $("#log").textContent = "";
+  const analysis = $("#fail-analysis");
+  if (analysis) {
+    analysis.replaceChildren();
+    analysis.classList.add("hidden");
+  }
+  const accountIssues = new Map();
   if (!runProgress) { const p2 = $("#run-progress-panel"); if (p2) p2.hidden = true; }
   setLogStatus("running");
   if (note) {
@@ -1888,9 +1900,19 @@ function attachRun(id, note, kind) {
   es.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.line) appendLog(msg.line);
+    const issues = msg.account_issues || (msg.line?.account_issue ? [msg.line.account_issue] : []);
+    let issuesChanged = false;
+    for (const issue of issues) {
+      const previous = accountIssues.get(issue.account);
+      if (previous?.reason === issue.reason && previous?.code === issue.code) continue;
+      accountIssues.set(issue.account, issue);
+      issuesChanged = true;
+    }
+    if (issuesChanged || (msg.status === "failed" && !accountIssues.size)) {
+      showFailAnalysis([...accountIssues.values()]);
+    }
     if (msg.status) {
       setLogStatus(msg.status, msg.exit_code);
-      if (msg.status === 'failed') showFailAnalysis();
       if (msg.done) {
         if (runProgress && (msg.status === "failed" || msg.status === "stopped")) {
           runProgress.order.forEach((k) => {
@@ -1899,7 +1921,7 @@ function attachRun(id, note, kind) {
             else if (state.status === "wait") setRunStep(k, "skip", "未执行");
           });
           setRunProgressNote(msg.status === "stopped" ? "任务已终止" :
-            (runProgress.batch ? "批次失败，后续账号未执行；本批次未自动同步台账，请检查已完成账号后手动同步。" : "运行失败，请查看日志"));
+            (runProgress.batch?.summary || (accountIssues.size ? "有账号无法执行，请查看失败分析" : "运行失败，请查看日志")));
         }
         if (runProgressTimer) { clearInterval(runProgressTimer); runProgressTimer = null; }
         es.close(); es = null;
@@ -3271,10 +3293,28 @@ const FAIL_RULES = [
   },
 ];
 
-function showFailAnalysis() {
-  if (!runProgress) return;
+function accountIssueMarkup(issues) {
+  if (!issues?.length) return "";
+  const rows = issues.map(({account, message, code, action}) => {
+    const profile = "https://www.tiktok.com/@" + encodeURIComponent(account);
+    const status = code == null ? "" : `（TikTok 状态码 ${esc(String(code))}）`;
+    return `<li><strong>@${esc(account)}</strong> · ${esc(message)}${status}
+      <div>${esc(action)} <a href="${esc(profile)}" target="_blank" rel="noopener noreferrer">打开主页</a></div></li>`;
+  }).join("");
+  return `<ul class="account-issue-list">${rows}</ul>`;
+}
+
+function showFailAnalysis(accountIssues = []) {
   const fa = $("#fail-analysis");
   if (!fa) return;
+  if (accountIssues.length) {
+    fa.innerHTML = `<div class="fa-card"><div class="fa-title">账号无法执行</div>${accountIssueMarkup(accountIssues)}</div>`;
+    fa.classList.remove("hidden");
+    const panel = $("#run-progress-panel");
+    if (panel) panel.hidden = false;
+    return;
+  }
+  if (!runProgress) return;
   const text = [...(runProgress.errLines || []), ...(runProgress.lines || [])].join("\n");
   let rule = null;
   for (const r of FAIL_RULES) {
@@ -3328,6 +3368,13 @@ function parseRunLine(t) {
     });
     renderRunProgress();
     setRunProgressNote(`账号 ${m[1]}/${m[2]}：${m[3]}`);
+    return;
+  }
+  m = t.match(/^\[multi\] 执行结束：成功 (\d+)，失败 (\d+)$/);
+  if (m && runProgress.batch) {
+    const summary = `批量结束 · 成功 ${m[1]} 个，失败 ${m[2]} 个`;
+    runProgress.batch.summary = summary;
+    setRunProgressNote(summary);
     return;
   }
   if (/^\[multi\] 全部账号完成$/.test(t)) {

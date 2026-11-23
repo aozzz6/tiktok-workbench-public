@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>TikTok 对标工作台</title>
-<link rel="stylesheet" href="/static/style.css?v=20261023A" />
+<link rel="stylesheet" href="/static/style.css?v=20261123C" />
 <link rel="stylesheet" href="/static/style.v2.css?v=20261022B" />
 <link rel="stylesheet" href="/static/tablekit.css?v=20261022B" />
 <link rel="stylesheet" href="/static/style.v3.css?v=20261022B" />
@@ -20,7 +20,7 @@
   <link rel="stylesheet" href="/static/ov-paper.css?v=20261028b" />
 <link rel="stylesheet" href="/static/reverse_v2.css?v=20261028rv2" />
 <link rel="stylesheet" href="/static/reverse_v2.extra.css?v=20261030fb" />
-  <link rel="stylesheet" href="/static/run2/run2.css?v=20261028A">
+  <link rel="stylesheet" href="/static/run2/run2.css?v=20261123C">
 </head>
 <body>
 <div class="app">
@@ -310,6 +310,7 @@
               <dt>生效范围</dt><dd id="schedule-targets">—</dd>
               <dt>上次定时任务</dt><dd id="schedule-last">—</dd></dl>
           <p class="muted" id="schedule-waiting" role="status"></p>
+          <div id="schedule-issues" aria-live="polite" hidden></div>
         </section>
       </div>
     </section>
@@ -498,7 +499,7 @@
           <span id="run-progress-note" class="muted"></span>
         </div>
         <div id="run-progress" class="rp"></div>
-        <div id="fail-analysis" class="fa hidden"></div>
+        <div id="fail-analysis" class="fa hidden" aria-live="polite"></div>
       </div>
       <div class="panel">
         <div class="panel-head">
@@ -542,9 +543,9 @@
   <script src="/static/bench_s096.js?v=20261028S96"></script>
   <script src="/static/tablekit.js?v=20261022B"></script>
 <script src="/static/accounts_s236.js?v=20261028A"></script>
-<script src="/static/daily_schedule.js?v=1.2.0"></script>
 <script src="/static/daily_brief.js?v=1"></script>
-<script src="/static/app.js?v=20261123B"></script>
+<script src="/static/app.js?v=20261123C"></script>
+<script src="/static/daily_schedule.js?v=20261123C"></script>
 <script src="/static/ai_admin.js?v=20261028B"></script>
 <script src="/static/reverse_voice.js?v=20261027Q"></script>
 <script src="/static/reverse.js?v=20261027Q"></script>
@@ -568,7 +569,7 @@
   }
 </script>
   <script src="/static/ov-paper.js?v=20261028b" defer></script>
-  <script src="/static/run2/run2.js?v=20261028A" defer></script>
+  <script src="/static/run2/run2.js?v=20261123C" defer></script>
 </body>
 </html>
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -16,6 +17,14 @@ import config
 import store
 
 MAX_LINES = 4000
+
+_ACCOUNT_ISSUE_LINE = re.compile(r"\[account-issue\] ([a-z0-9_.]+) ([a-z_]+) ([0-9]{1,10}|-)")
+_ACCOUNT_ISSUE_MESSAGES = {
+    "profile_unavailable": ("TikTok 没有返回账号资料", "打开 TikTok 主页，确认用户名是否改过、链接是否正确，以及登录后能否看到主页。"),
+    "private_account": ("TikTok 将此账号标记为私密", "请在 TikTok 登录有权限的账号，确认是否能查看该账号的作品。"),
+    "private_content": ("TikTok 提示账号或作品可能设为私密，当前无法读取作品", "请登录有权限的 TikTok 账号查看作品的可见范围。"),
+    "no_posts": ("TikTok 未找到该账号已发布的作品", "打开 TikTok 主页确认该账号是否已发布可查看的作品。"),
+}
 
 # ────────────────────── 共享写者资源锁（2026-10-24 R1）──────────────────────
 # 问题（独立验收 R1）：修复启动时只**检查**已有 pipeline/daily/ledger，但
@@ -310,6 +319,7 @@ class Run:
     ended_at: float | None = None
     lines: list[dict] = field(default_factory=list)
     line_count: int = 0
+    account_issues: dict[str, dict] = field(default_factory=dict)
     subscribers: list[queue.Queue] = field(default_factory=list)
     proc: subprocess.Popen | None = None
     job: object = None               # 本轮命名 Job 句柄（P1-R2）
@@ -336,6 +346,7 @@ class Run:
             "ended_at": self.ended_at,
             "duration_s": round((self.ended_at or time.time()) - self.started_at, 1),
             "line_count": self.line_count,
+            "account_issues": list(self.account_issues.copy().values()),
             "tail": [l["text"] for l in self.lines[-20:]],
         }
 
@@ -517,6 +528,16 @@ class RunManager:
 
     def _emit(self, run: Run, text: str) -> None:
         item = {"i": run.line_count, "t": round(time.time() - run.started_at, 1), "text": text}
+        if run.kind in {"pipeline", "daily"}:
+            match = _ACCOUNT_ISSUE_LINE.fullmatch(text)
+            if match and match[2] in _ACCOUNT_ISSUE_MESSAGES:
+                account, reason, code = match.groups()
+                message, action = _ACCOUNT_ISSUE_MESSAGES[reason]
+                issue = {"account": account, "reason": reason, "code": None if code == "-" else int(code),
+                         "message": message, "action": action}
+                if run.account_issues.get(account) != issue:
+                    run.account_issues[account] = issue
+                    item["account_issue"] = issue
         run.line_count += 1
         run.lines.append(item)
         if len(run.lines) > MAX_LINES:
@@ -550,6 +571,7 @@ class RunManager:
             "status": status, "exit_code": code,
             "ended_at": run.ended_at,
             "duration_s": round((run.ended_at or 0) - run.started_at, 1),
+            "account_issues": list(run.account_issues.copy().values()),
         })
         for fn in list(self._finish_hooks):
             try:

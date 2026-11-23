@@ -59,6 +59,8 @@ def enumerate_recent(account: str, limit: int, date_from: str | None = None,
                 info = ydl.extract_info(topic, download=False)
                 break
             except Exception as e:
+                if isinstance(e, yt_dlp.utils.DownloadError):
+                    tk_audio_download.check_profile_access_error(account, e)
                 if attempt == 2:
                     raise
                 time.sleep(20 * (attempt + 1))
@@ -99,6 +101,9 @@ def main() -> int:
     try:
         ids = enumerate_recent(a.account, a.limit, a.date_from, a.date_to)
     except Exception as e:
+        from tk_audio_download import ProfileUnavailable
+        if isinstance(e, ProfileUnavailable):
+            e.report()
         print(json.dumps({"account": a.account, "ids": [], "count": 0,
                           "error": f"{type(e).__name__}: {str(e)[:160]}"},
                          ensure_ascii=False), flush=True)

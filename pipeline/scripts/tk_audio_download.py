@@ -105,6 +105,37 @@ def _browser_payload(account: str) -> dict:
         raise RuntimeError(f"浏览器兜底解析异常: {e} raw={r.stdout.strip()[-160:]}")
 
 
+class ProfileUnavailable(RuntimeError):
+    def __init__(self, account: str, reason: str, status: int | None = None):
+        self.account = account
+        self.reason = reason
+        self.status = status
+        summary = {
+            "profile_unavailable": "TikTok 没有返回账号资料",
+            "private_account": "TikTok 将账号标记为私密",
+            "private_content": "TikTok 提示账号或作品可能设为私密",
+            "no_posts": "TikTok 未找到已发布的作品",
+        }[reason]
+        super().__init__(f"@{account}：{summary}" + (f"（状态码 {status}）" if status is not None else ""))
+
+    def report(self) -> None:
+        code = self.status if self.status is not None else "-"
+        print(f"[account-issue] {self.account} {self.reason} {code}", file=sys.stderr, flush=True)
+        print(f"[error] {self}", file=sys.stderr, flush=True)
+
+
+def check_profile_access_error(account: str, error: Exception) -> None:
+    """提取器明确返回账号访问问题时，保留原因供工作台显示。"""
+    message = str(error)
+    for text, reason in (
+        ("This user's account is private.", "private_account"),
+        ("This user's account is likely either private or all of their videos are private.", "private_content"),
+        ("This account does not have any videos posted", "no_posts"),
+    ):
+        if text in message:
+            raise ProfileUnavailable(account, reason) from error
+
+
 def resolve_uid(account: str) -> str:
     """主页 SSR 不内嵌视频列表，但含 uid → yt-dlp 需 tiktokuser:{uid} 形式
     （yt-dlp 2026.8 的 @account 直接提取报 'Unable to extract secondary user ID'）。
@@ -127,10 +158,14 @@ def resolve_uid(account: str) -> str:
             if not m:
                 raise RuntimeError("主页无内嵌数据（可能被风控，检查代理）")
             data = json.loads(m.group(1))
-            ui = (data.get("__DEFAULT_SCOPE__", {}).get("webapp.user-detail", {})
-                  .get("userInfo") or {}).get("user", {})
+            detail = data.get("__DEFAULT_SCOPE__", {}).get("webapp.user-detail", {}) or {}
+            ui = (detail.get("userInfo") or {}).get("user") or {}
             uid = ui.get("id")
             if not uid:
+                status = detail.get("statusCode")
+                if status in (10221, 10222, 209002):
+                    reason = "private_account" if status == 10222 else "profile_unavailable"
+                    raise ProfileUnavailable(account, reason, status)
                 raise RuntimeError(f"未解析到 uid（账号可能不存在或私密）: {account}")
             cache_data[account] = str(uid)
             cache.write_text(json.dumps(cache_data, ensure_ascii=False, indent=2),
@@ -138,6 +173,8 @@ def resolve_uid(account: str) -> str:
             if ui.get("secUid") and not load_secuid(account):  # ★ secUid 一并落盘
                 save_secuid(account, ui["secUid"])
             return str(uid)
+        except ProfileUnavailable:
+            raise
         except Exception as e:
             last_err = e
             wait = 20 * (attempt + 1)   # 20/40/60s：扛过分钟级风控冷却窗
@@ -189,6 +226,8 @@ def enumerate_videos(account: str):
                 info = ydl.extract_info(topic, download=False)
                 break
             except Exception as e:
+                if isinstance(e, yt_dlp.utils.DownloadError):
+                    check_profile_access_error(account, e)
                 if attempt == 2:
                     raise
                 wait = 20 * (attempt + 1)   # 20/40/60s
@@ -250,6 +289,8 @@ def main() -> int:
     entries = None
     try:
         entries = enumerate_videos(a.account)
+    except ProfileUnavailable:
+        raise
     except Exception as e:
         existing = sorted(out_dir.glob(f"{a.account}_*.mp3"))
         if existing:  # 增量恢复：枚举被限流但产物已在盘上 → 以盘上计数降级
@@ -333,4 +374,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except ProfileUnavailable as e:
+        e.report()
+        sys.exit(1)

@@ -613,11 +613,7 @@ def run_account(acc: dict, date_from: str, date_to: str, retry: int,
         "lang": acc.get("lang") or "en",
         "backend": "faster",
         "allow_scrape_errors": True,
-        # ★ 必须带 no_resume（2026-10-20 实测踩坑）：pipeline_state 的 key 是
-        #   "{account}|{step}"，skip 判定只看 rec.ok 不看日期（仅图文 s2 比 date_range）。
-        #   不带的话：同一天二次运行、或昨天已 ok 的视频账号，s0/s1/s2/s5 全部「已完成，跳过」
-        #   → 整轮静默空跑、台账行数照旧对得上，看不出任何异常。
-        #   当日实测：88 次运行里 72 次 <1s 全跳过，28 个视频账号当天根本没有新数据。
+        # 日更需要刷新播放数据，同一日期范围重跑时也不跳过采集步骤。
         "no_resume": True,
     }
     # ★ 修复派生的子任务：把租约带回服务端，并入同一租约而非被它自己挡住。
@@ -685,7 +681,12 @@ def run_account(acc: dict, date_from: str, date_to: str, retry: int,
         reason = f"pipeline {snap.get('status')} exit={snap.get('exit_code')}"
         if snap.get("abort_retry"):
             reason += "；" + str(snap.get("abort_reason") or "旧任务未确认终止")
-        anomalies = [reason] + tail
+        issues = [issue for issue in (snap.get("account_issues") or []) if issue.get("account") == name]
+        for issue in issues:
+            code = issue.get("code")
+            log(f"[account-issue] {name} {issue['reason']} {code if code is not None else '-'}")
+        anomalies = [issue["message"] + (f"（TikTok 状态码 {issue['code']}）" if issue.get("code") is not None else "")
+                     for issue in issues] + [reason] + tail
     # 空跑护栏：整链 <2s 基本只可能是「断点续跑全跳过」（no_resume 没生效/被子类覆盖）
     skipped_all = False
     dur = snap.get("duration_s")

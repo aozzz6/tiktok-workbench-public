@@ -258,6 +258,7 @@
           '<span>耗时</span><b>' + dur(run.duration) + '</b>' +
           '<span>退出码</span><b>' + (run.exit == null ? '—' : run.exit) + '</b>' +
         '</div>' +
+        (run.accountIssues?.length ? '<h3>账号失败原因</h3>' + accountIssueMarkup(run.accountIssues) : '') +
         (run.cmd ? '<h3 style="font-size:12px;margin:14px 0 6px">命令</h3><pre>' + esc(run.cmd) + '</pre>' : '') +
       '</div>';
     drawer.classList.add('on');
@@ -345,7 +346,7 @@
         at: r.started_at ? hhmm(r.started_at) : '—',
         day: r.started_at ? dayOf(r.started_at) : '',
         status: r.status === 'interrupted' ? 'interrupted' : (r.status || 'done'),
-        duration: r.duration_s || 0, exit: r.exit_code
+        duration: r.duration_s || 0, exit: r.exit_code, accountIssues: r.account_issues || []
       }));
       DATA.groups = ((groups && groups.groups) || []).map((g) => ({
         name: g.name, count: g.count || (g.members || []).length,
@@ -504,7 +505,7 @@
       '<span class="rv2-chip ' + (runningAcc.has(a) ? 'live' : '') + '">' + (runningAcc.has(a) ? '● ' : '') + esc(a) + '</span>').join('') ||
       '<span class="rv2-chip">未选账号</span>';
     const note = $('#run-progress-note');
-    if (note) note.textContent = running.length ? '运行中 · ' + dur(running[0].duration) : '空闲';
+    if (note && !note.textContent.trim()) note.textContent = running.length ? '运行中 · ' + dur(running[0].duration) : '空闲';
   }
 
   /* 运行状态徽标变了（旧页在写），顺手把看板/进度也刷一下 */
