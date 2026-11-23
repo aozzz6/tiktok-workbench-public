@@ -25,19 +25,25 @@
       vid: v.vid,
       account: v.account,
       title: v.title,
-      desc: String(v.desc || '').slice(0, 260),
+      desc: String(v.desc || ''),
       plays: v.plays,
       likes: v.likes,
       comments: v.comments,
       shares: v.shares,
       collects: v.collects,
-      publish_time: v.publish_time,
-      day: String(v.publish_time).slice(5, 10),
-      fullDay: String(v.publish_time).slice(0, 10),
+      publish_time: String(v.publish_time || ''),
+      day: String(v.publish_time || '').slice(5, 10),
+      fullDay: String(v.publish_time || '').slice(0, 10),
       url: v.url,
       products: (v.products || []).map((p) => ({ product_id: p.product_id, title: p.title })),
       source: v.source,
-      engagement: v.engagement
+      engagement: v.engagement,
+      missingMetrics: v.missing_metrics || [],
+      delta: v.play_growth?.delta ?? null,
+      growthStatus: v.play_growth?.status,
+      transcriptStatus: v.transcript_status,
+      mediaType: v.media_type,
+      productLink: v.product_link
     }));
 
     const dayMap = new Map();

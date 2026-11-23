@@ -153,6 +153,50 @@ def _snapshot_rows(db, accounts, today, yesterday, cutoff):
         yield name, catalog, rows
 
 
+def benchmark_growth(videos: list[dict], now: datetime | None = None) -> dict:
+    """Return same-account comparisons for the requested benchmark videos."""
+    now = now or datetime.now(GMT8)
+    now = now.replace(tzinfo=GMT8) if now.tzinfo is None else now.astimezone(GMT8)
+    today = now.date().isoformat()
+    yesterday = (now.date() - timedelta(days=1)).isoformat()
+    wanted = defaultdict(set)
+    for video in videos:
+        if video.get("media_type") != "image" and "/photo/" not in (video.get("url") or ""):
+            wanted[_handle(video.get("account"))].add(video.get("vid"))
+    path = config.OUTPUT_DIR / "video_snapshots.sqlite3"
+    if not wanted or not path.is_file():
+        return {}
+
+    results = {}
+    try:
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)) as db:
+            db.execute("BEGIN")
+            for account, ids in wanted.items():
+                by_video = defaultdict(dict)
+                for vid, day, taken, plays, published, published_date in db.execute("""
+                    SELECT video_id, observed_date, observed_at, plays, published_at, published_date
+                    FROM video_snapshots
+                    WHERE account = ? AND observed_date IN (?, ?) AND instr(url, '/photo/') = 0
+                    """, (account, yesterday, today)):
+                    observed = _timestamp(taken)
+                    precise, publication = _publication(published, published_date)
+                    if (vid in ids and type(plays) is int and plays >= 0 and observed and observed <= now
+                            and observed.date().isoformat() == day and publication and publication[:10] <= day
+                            and (not precise or precise <= observed)):
+                        by_video[vid][day] = (plays, publication[:10])
+                for vid, readings in by_video.items():
+                    current = readings.get(today)
+                    if not current:
+                        continue
+                    if yesterday in readings and current[1] < today:
+                        results[account, vid] = {"delta": current[0] - readings[yesterday][0], "status": "comparable"}
+                    elif current[1] == today:
+                        results[account, vid] = {"delta": None, "status": "baseline"}
+    except sqlite3.Error:
+        return {}
+    return results
+
+
 def _tags(raw, caption):
     try:
         explicit = json.loads(raw or "[]")

@@ -1,9 +1,5 @@
 /* ============================================================
-   bench_s096.js · 对标分析屏（S096 · A10 象限落点 / P18 奶咖 / airy / bold）
-   2026-10-28：整屏替换 #view-bench 的内容，其它视图不动。
-   保留的主力交互：账号切换、视频搜索/时间/播放量/挂车/来源/排序、分页、
-                  CSV 导出、导出结论、抽屉下钻、7/14/全部 周期、表头排序。
-   隔离方式：Shadow DOM —— 只在这里引入 S096 的 CSS，不污染全站样式。
+   对标分析 · 视频工作流与账号分析共用同一份 benchmark 数据。
    ============================================================ */
 (function () {
   'use strict';
@@ -12,16 +8,27 @@
   const CSS_FILES = ['base.css', 'pal-extra.css', 'ui.css', 'bench.css', 'arch-e.css'];
   const CSS_BASE = '/static/bench2/';
 
-  let host = null, shadow = null, booted = false, cssReady = false;
+  let host = null, shadow = null, booted = false, initializing = null;
+  let pendingUrl = '', requestId = 0, returnPosition = null;
+  let transcriptRequest = 0;
+
+  const QUADRANTS = { hh: '标杆', hl: '流量', lh: '潜力', ll: '沉寂' };
+  const SORTS = {
+    plays: { field: 'plays', label: '累计播放' }, delta: { field: 'delta', label: '日增' },
+    likes: { field: 'likes', label: '点赞' }, engagement: { field: 'engagement', label: '互动率' },
+    time: { field: 'publish_time', label: '发布时间' }
+  };
+  const handedOff = new Set();
 
   const st = {
     acct: 'all',
     group: null,          // { gid, accounts: [] }
     period: 'all',        // '7' | '14' | 'all'
-    q: '', days: '', plays: 0, prod: '', src: '', sort: 'plays_desc',
+    video: '', q: '', days: '', plays: 0, prod: '', src: '', quad: '', rise: false,
+    sort: 'plays_desc',
     page: 1, size: 20,
     accSort: 'total_plays', accDir: 'desc',
-    D: null, loading: false, error: null
+    D: null
   };
 
   /* ── 小工具 ───────────────────────────────────────────── */
@@ -52,9 +59,53 @@
           '</div>' +
         '</header>' +
         '<div id="b96-kpi"></div>' +
-        '<div class="a10-hero"><div id="b96-hero"></div><aside class="a10-leg" id="b96-leg"></aside></div>' +
-        '<div class="a10-row"><div id="b96-trend"></div><div id="b96-pat"></div></div>' +
-        '<div class="a10-row2">' +
+        '<nav class="b96-tabs" aria-label="对标分析视图">' +
+          '<button type="button" data-tab="videos" aria-controls="b96-videos" aria-pressed="true">视频明细</button>' +
+          '<button type="button" data-tab="insights" aria-controls="b96-insights" aria-pressed="false">账号与规律</button>' +
+        '</nav>' +
+        '<p id="b96-refresh-error" class="b96-refresh-error" role="status" hidden></p>' +
+        '<section class="mod b-vidmod" id="b96-videos" data-unit="videos">' +
+            '<div class="mod-b">' +
+              '<div class="b96-tools">' +
+                '<input class="b96-inp" id="b96-q" type="search" aria-label="搜索标题、文案或账号" placeholder="搜索标题 / 文案 / 账号" autocomplete="off">' +
+                '<select class="b96-sel-sm" id="b96-days" aria-label="发布时间"><option value="">全部时间</option><option value="1">近 1 天</option>' +
+                  '<option value="3">近 3 天</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option></select>' +
+                '<select class="b96-sel-sm" id="b96-plays" aria-label="累计播放量"><option value="0">全部播放量</option><option value="1000">≥ 1 千</option>' +
+                  '<option value="10000">≥ 1 万</option><option value="100000">≥ 10 万</option><option value="500000">≥ 50 万</option></select>' +
+                '<select class="b96-sel-sm" id="b96-prod" aria-label="挂车"><option value="">挂车：全部</option><option value="yes">仅带小黄车</option>' +
+                  '<option value="no">仅未挂车</option></select>' +
+                '<select class="b96-sel-sm" id="b96-src" aria-label="来源"><option value="">来源：全部</option><option value="scrape">仅抓取快照</option>' +
+                  '<option value="ledger">仅台账补录</option></select>' +
+                '<select class="b96-sel-sm" id="b96-quad" aria-label="账号象限"><option value="">象限：全部</option>' +
+                  Object.entries(QUADRANTS).map(([key, label]) => '<option value="' + key + '">' + label + '</option>').join('') + '</select>' +
+                '<button class="btn ghost sm" data-act="rising" aria-pressed="false" title="今日快照播放量高于昨日">正在起量</button>' +
+                '<select class="b96-sel-sm" id="b96-sort" aria-label="视频排序">' +
+                  Object.entries(SORTS).map(([key, { label }]) => '<option value="' + key + '_desc">' + label + ' ↓</option>' +
+                    '<option value="' + key + '_asc">' + label + ' ↑</option>').join('') + '</select>' +
+                '<button class="btn ghost sm" data-act="vreset">重置</button>' +
+                '<div class="b96-list-actions"><span id="b96-vsub" class="muted tiny" aria-live="polite"></span>' +
+                  '<button class="btn ghost sm" data-act="csvvid">导出 CSV</button></div>' +
+              '</div>' +
+              '<div id="b96-chips" class="b96-chips" hidden></div>' +
+              '<div class="b96-video-grid" id="b96-video-grid">' +
+                '<div class="b96-list">' +
+                  '<div class="b-tablewrap b96-video-scroll" id="b96-vscroll"><table class="tb b-tb b-tb-vid" aria-label="对标视频">' +
+                    '<thead><tr><th scope="col">账号</th><th scope="col">标题</th>' +
+                      ['time', 'plays', 'delta', 'likes', 'engagement'].map((key) =>
+                        '<th scope="col" class="r" data-column="' + key + '"><button type="button" data-vsort="' + key + '">' + SORTS[key].label + '</button></th>').join('') +
+                      '<th scope="col" class="c" data-column="product">商品</th><th scope="col" class="c" data-column="transcript">口播</th>' +
+                    '</tr></thead><tbody id="b96-vbody"></tbody></table></div>' +
+                  '<div class="b96-empty" id="b96-empty" hidden></div>' +
+                '</div>' +
+                '<aside class="b96-video-detail" id="b96-video-detail" aria-label="视频详情" hidden></aside>' +
+              '</div>' +
+              '<div class="b96-pager" id="b96-vpager"></div>' +
+            '</div>' +
+            '<footer class="mod-f"><span id="b96-vfoot">—</span></footer>' +
+        '</section>' +
+        '<section id="b96-insights" aria-label="账号与规律" hidden>' +
+          '<div class="a10-hero"><div id="b96-hero"></div><aside class="a10-leg" id="b96-leg"></aside></div>' +
+          '<div class="a10-row"><div id="b96-trend"></div><div id="b96-pat"></div></div>' +
           '<section class="mod b-accmod" data-unit="acctable">' +
             '<header class="mod-h"><h2>账号对比</h2><span class="hint" id="b96-asub">—</span>' +
               '<div class="mod-a"><button class="btn ghost sm" data-act="csvacc">导出 CSV</button></div></header>' +
@@ -67,41 +118,11 @@
               '</tr></thead><tbody id="b96-abody"></tbody></table></div></div>' +
             '<footer class="mod-f"><span id="b96-afoot">—</span><span class="muted">点表头排序 · 点行开详情</span></footer>' +
           '</section>' +
-          '<section class="mod b-vidmod" data-unit="videos">' +
-            '<header class="mod-h"><h2>视频明细</h2><span class="hint" id="b96-vsub">—</span>' +
-              '<div class="mod-a"><button class="btn ghost sm" data-act="csvvid">导出 CSV</button></div></header>' +
-            '<div class="mod-b">' +
-              '<div class="b96-tools">' +
-                '<input class="b96-inp" id="b96-q" type="search" placeholder="搜索标题 / 文案 / 账号" autocomplete="off">' +
-                '<select class="b96-sel-sm" id="b96-days"><option value="">全部时间</option><option value="1">近 1 天</option>' +
-                  '<option value="3">近 3 天</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option></select>' +
-                '<select class="b96-sel-sm" id="b96-plays"><option value="0">全部播放量</option><option value="1000">≥ 1 千</option>' +
-                  '<option value="10000">≥ 1 万</option><option value="100000">≥ 10 万</option><option value="500000">≥ 50 万</option></select>' +
-                '<select class="b96-sel-sm" id="b96-prod"><option value="">挂车：全部</option><option value="yes">仅带小黄车</option>' +
-                  '<option value="no">仅未挂车</option></select>' +
-                '<select class="b96-sel-sm" id="b96-src"><option value="">来源：全部</option><option value="scrape">仅抓取快照</option>' +
-                  '<option value="ledger">仅台账补录</option></select>' +
-                '<select class="b96-sel-sm" id="b96-sort"><option value="plays_desc">播放 高→低</option>' +
-                  '<option value="plays_asc">播放 低→高</option><option value="likes_desc">点赞 高→低</option>' +
-                  '<option value="engagement_desc">互动率 高→低</option><option value="time_desc">发布 新→旧</option>' +
-                  '<option value="time_asc">发布 旧→新</option></select>' +
-                '<button class="btn ghost sm" data-act="vreset">重置</button>' +
-                '<span class="b96-count" id="b96-vcount">—</span>' +
-              '</div>' +
-              '<div class="b-tablewrap"><table class="tb b-tb b-tb-vid">' +
-                '<thead><tr><th>账号</th><th>标题</th><th class="r">发布</th><th class="r">播放</th>' +
-                '<th class="r">点赞</th><th class="r">互动率</th><th class="c">商品</th></tr></thead>' +
-                '<tbody id="b96-vbody"></tbody></table></div>' +
-              '<div class="b96-pager" id="b96-vpager"></div>' +
-            '</div>' +
-            '<footer class="mod-f"><span id="b96-vfoot">—</span><span class="muted">抓取快照按发布时间归集</span></footer>' +
-          '</section>' +
-        '</div>' +
-        '<div class="a10-row3"><div id="b96-prodwrap"></div><div id="b96-topv"></div></div>' +
-        '<div id="b96-take"></div>' +
-        '<div id="b96-foot"></div>' +
+          '<div class="a10-row3"><div id="b96-prodwrap"></div><div id="b96-topv"></div></div>' +
+          '<div id="b96-take"></div><div id="b96-foot"></div>' +
+        '</section>' +
       '</div>' +
-      '<div class="b96-load" id="b96-load"><div class="b96-load-in"><i></i><p id="b96-load-tip">正在读取 /api/benchmark …</p>' +
+      '<div class="b96-load" id="b96-load"><div class="b96-load-in"><i></i><p id="b96-load-tip" role="status">正在读取对标数据…</p>' +
         '<button class="btn" data-act="retry" hidden>重试</button></div></div>' +
       '<div class="scrim" id="b96-scrim"></div>' +
       '<aside class="drawer" id="b96-drawer" role="dialog" aria-modal="true"></aside>' +
@@ -132,14 +153,74 @@
     }
     .bs96 .pg { position: relative; z-index: 1; padding-top: 20px; }
     .bs96 .b-head { flex-wrap: wrap; row-gap: 8px; }
-    .bs96 .a10-row2 { grid-template-columns: minmax(0, 1fr); }
-    .bs96 .a10-row2 .b-vidmod { order: -1; }
-    .bs96 .b-tb-vid th:nth-child(1), .bs96 .b-tb-vid td:nth-child(1) { width: 118px; }
-    .bs96 .b-tb-vid th:nth-child(3), .bs96 .b-tb-vid td:nth-child(3) { width: 56px; }
-    .bs96 .b-tb-vid th:nth-child(4), .bs96 .b-tb-vid td:nth-child(4) { width: 78px; }
-    .bs96 .b-tb-vid th:nth-child(5), .bs96 .b-tb-vid td:nth-child(5) { width: 64px; }
-    .bs96 .b-tb-vid th:nth-child(6), .bs96 .b-tb-vid td:nth-child(6) { width: 60px; }
-    .bs96 .b-tb-vid th:nth-child(7), .bs96 .b-tb-vid td:nth-child(7) { width: 58px; }
+    .bs96 .b96-tabs { display: flex; gap: 15px; border-bottom: 1px solid var(--line2); margin: 12px 0; }
+    .bs96 .b96-tabs button { font: inherit; font-weight: 650; color: var(--muted); padding: 8px 3px;
+      border: 0; border-bottom: 2px solid transparent; background: transparent; cursor: pointer; }
+    .bs96 .b96-tabs button[aria-pressed="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+    .bs96 .b-accmod { margin-bottom: var(--gap); }
+    .bs96 .b-vidmod { margin-top: 0; }
+    .bs96 .b-vidmod > .mod-b { padding: 12px 14px; }
+    .b96-list-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+    .b96-video-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start;
+      --video-height: clamp(280px, calc(100dvh - 290px), 680px); }
+    .b96-video-grid.is-open { grid-template-columns: minmax(0, 1fr) minmax(320px, 44%); }
+    .b96-list { min-width: 0; }
+    .bs96 .b96-video-scroll { max-height: var(--video-height); overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+    .bs96 .b96-video-scroll .b-tb-vid { min-width: 690px; width: 100%; }
+    .bs96 .b96-video-scroll th { position: sticky; top: 0; z-index: 2; background: var(--surface2); }
+    .bs96 .b96-video-scroll tbody td { height: 32px; padding: 5px 8px; }
+    .bs96 .b96-video-scroll th:nth-child(1), .bs96 .b96-video-scroll td:nth-child(1) { width: 115px; }
+    .bs96 .b96-video-scroll [data-column="time"] { width: 82px; }
+    .bs96 .b96-video-scroll [data-column="plays"] { width: 86px; }
+    .bs96 .b96-video-scroll [data-column="delta"] { width: 86px; }
+    .bs96 .b96-video-scroll [data-column="likes"], .bs96 .b96-video-scroll [data-column="engagement"] { width: 66px; }
+    .bs96 .b96-video-scroll [data-column="product"] { width: 74px; }
+    .bs96 .b96-video-scroll [data-column="transcript"] { width: 64px; }
+    .bs96 .b96-video-scroll td[data-column] { white-space: nowrap; text-overflow: ellipsis; }
+    .bs96 .b96-video-scroll td[data-column="product"] { text-overflow: clip; padding-inline: 4px; }
+    .bs96 .b96-video-scroll th button, .b96-row-title, .b96-quad-button {
+      border: 0; padding: 0; background: none; color: inherit; cursor: pointer; font: inherit;
+    }
+    .b96-row-title { display: inline-block; text-align: left; max-width: 100%; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+    .b96-row-title:focus-visible, .bs96 button:focus-visible, .bs96 summary:focus-visible, .bs96 a:focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px;
+    }
+    .bs96 th[aria-sort] button { color: var(--accent); font-weight: 700; }
+    .bs96 th[aria-sort="ascending"] button::after { content: " ↑"; }
+    .bs96 th[aria-sort="descending"] button::after { content: " ↓"; }
+    .bs96 tr.is-selected { background: color-mix(in oklab, var(--accent) 12%, var(--surface)); }
+    .b96-handoff { display: inline-block; margin-inline-start: 6px; color: var(--accent); font-size: 10px; }
+    .b96-positive { color: var(--ok); }
+    .bs96 .b96-video-grid.is-open .b-tb-vid { min-width: 320px; }
+    .bs96 .b96-video-grid.is-open th:first-child, .bs96 .b96-video-grid.is-open td:first-child { width: 94px; }
+    .bs96 .b96-video-grid.is-open :is(th, td)[data-column]:not([data-column="plays"]):not([data-column="delta"]):not(.is-sorted) { display: none; }
+    .bs96 .b96-video-detail { display: flex; flex-direction: column; min-width: 0; max-height: var(--video-height);
+      border: 1px solid var(--line2); border-radius: 8px; background: var(--surface); }
+    .b96-detail-head { padding: 12px 14px 10px; border-bottom: 1px solid var(--line); }
+    .b96-detail-top, .b96-detail-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .b96-detail-head h3 { font-size: 15px; margin: 7px 0 0; overflow-wrap: anywhere; }
+    .b96-detail-head h3:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+    .b96-detail-body { padding: 4px 14px 12px; overflow: auto; }
+    .b96-detail-body h4 { margin: 12px 0 4px; font-size: 12px; }
+    .b96-detail-body p { margin: 4px 0; overflow-wrap: anywhere; }
+    .b96-detail-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px;
+      margin: 4px 0 8px; padding-bottom: 9px; border-bottom: 1px solid var(--line); }
+    .b96-detail-metrics div { min-width: 0; }
+    .b96-detail-metrics dt { color: var(--muted); font-size: 10px; }
+    .b96-detail-metrics dd { margin: 0; font-weight: 650; overflow-wrap: anywhere; }
+    .b96-detail-footer { padding: 9px 14px; border-top: 1px solid var(--line); }
+    .b96-detail-footer [data-act="handoff"] { margin-left: auto; }
+    .b96-detail-text { white-space: pre-wrap; }
+    .b96-detail-text summary { white-space: normal; cursor: pointer; color: var(--accent); }
+    .b96-detail-text summary + p { margin-top: 6px; }
+    .b96-empty { text-align: center; padding: 38px 12px; color: var(--muted); }
+    .b96-empty p { margin: 0 0 12px; }
+    .b96-refresh-error { margin: 0 0 10px; padding: 7px 10px; border: 1px solid var(--line2); background: var(--surface); border-radius: 8px; }
+    .b96-chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin: 0 0 8px; }
+    .b96-chips button { cursor: pointer; }
+    .bs96 [data-act="rising"][aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+    .b96-quad-button { font-weight: 650; text-align: left; }
 
     .b96-sel, .b96-sel-sm, .b96-inp {
       font: inherit; color: var(--ink); background: var(--surface);
@@ -153,7 +234,6 @@
     .b96-sel:focus, .b96-sel-sm:focus, .b96-inp:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 16%, transparent); }
 
     .b96-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
-    .b96-count { margin-left: auto; font-size: 10px; color: var(--muted); white-space: nowrap; }
     .b96-scroll { max-height: 460px; overflow: auto; }
     .bs96 .b-tb-acc th:nth-child(1), .bs96 .b-tb-acc td:nth-child(1) { width: 44px; }
     .bs96 .b-tb-acc th:nth-child(3), .bs96 .b-tb-acc td:nth-child(3) { width: 44px; }
@@ -230,11 +310,32 @@
 
     @keyframes b96fade { from { opacity: .3; transform: translateY(3px); } to { opacity: 1; transform: none; } }
     .bs96 .b96-fade { animation: b96fade .22s var(--ease); }
-    @media (max-width: 900px) { .b96-inp { min-width: 120px; } }
+    @media (max-width: 1050px) {
+      .b96-video-grid.is-open { grid-template-columns: minmax(0, 1fr); }
+      .b96-video-grid.is-open .b96-video-scroll { max-height: min(42vh, 360px); }
+    }
+    @media (max-width: 680px) {
+      :host { margin: -12px; }
+      .bs96 .b-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .bs96 .b-strip-s { display: none; }
+      .bs96 .b-acts { flex-wrap: wrap; justify-content: flex-start; }
+      .b96-inp { min-width: 120px; }
+      .bs96 .b96-video-grid.is-open .b-tb-vid { min-width: 0; }
+      .bs96 .b96-video-grid.is-open [data-column="delta"]:not(.is-sorted) { display: none; }
+      .bs96 .b96-video-grid.is-open:has(th.is-sorted:not([data-column="plays"])) [data-column="plays"] { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .bs96 *, .bs96 *::before, .bs96 *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
   `;
 
   /* ── 初始化（只做一次） ───────────────────────────────── */
-  async function ensure() {
+  function ensure() {
+    if (!initializing) initializing = mount();
+    return initializing;
+  }
+
+  async function mount() {
     if (booted) return true;
     host = document.getElementById(HOST_ID);
     if (!host) return false;
@@ -276,6 +377,22 @@
       const act = t.closest('[data-act]');
       if (act) { doAction(act.dataset.act); return; }
 
+      const tab = t.closest('[data-tab]');
+      if (tab) { selectTab(tab.dataset.tab); return; }
+      const quad = t.closest('[data-quad]');
+      if (quad) { selectTab('videos'); setFilter('quad', quad.dataset.quad); return; }
+      const filter = t.closest('[data-clear-filter]');
+      if (filter) { setFilter(filter.dataset.clearFilter, filter.dataset.clearFilter === 'plays' ? 0 : ''); return; }
+      const videoSort = t.closest('[data-vsort]');
+      if (videoSort) {
+        const key = videoSort.dataset.vsort;
+        setFilter('sort', key + (st.sort === key + '_desc' ? '_asc' : '_desc'));
+        return;
+      }
+
+      const row = t.closest('[data-video-key]');
+      if (row) { openVideo(row.dataset.videoKey, t.closest('button') === shadow.activeElement); return; }
+
       const period = t.closest('[data-period]');
       if (period) { st.period = period.dataset.period; renderTrend(); return; }
 
@@ -304,25 +421,28 @@
       if (e.target.id === 'b96-q') {
         const v = e.target.value;
         clearTimeout(qTimer);
-        qTimer = setTimeout(() => { st.q = v; st.page = 1; renderVideos(); }, 240);
+        qTimer = setTimeout(() => setFilter('q', v), 180);
       }
     });
 
     shadow.addEventListener('change', (e) => {
       const id = e.target.id;
       if (id === 'b96-acc') { pickAccount(e.target.value); return; }
-      if (id === 'b96-days') st.days = e.target.value;
-      else if (id === 'b96-plays') st.plays = Number(e.target.value) || 0;
-      else if (id === 'b96-prod') st.prod = e.target.value;
-      else if (id === 'b96-src') st.src = e.target.value;
-      else if (id === 'b96-sort') st.sort = e.target.value;
-      else return;
-      st.page = 1;
-      renderVideos();
+      const key = id.replace(/^b96-/, '');
+      if (['days', 'plays', 'prod', 'src', 'quad', 'sort'].includes(key)) {
+        setFilter(key, key === 'plays' ? Number(e.target.value) : e.target.value);
+      }
     });
 
     shadow.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeDrawer();
+      if (e.key === 'Escape' && st.video) { closeVideo(true); e.stopPropagation(); return; }
+      const key = e.key.toLowerCase();
+      if (!st.video || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey ||
+          e.target.matches('input, select, textarea, [contenteditable]')) return;
+      if (key === 'j' || key === 'k') {
+        e.preventDefault();
+        stepVideo(key === 'j' ? 1 : -1, true);
+      }
     });
     // Shadow DOM 里的元素通常拿不到焦点，Esc 会落到 document 上：补一层全局监听
     document.addEventListener('keydown', (e) => {
@@ -359,43 +479,63 @@
   }
 
   /* ── 数据 ─────────────────────────────────────────────── */
-  function apiUrl() {
+  function apiUrl(refresh) {
+    const params = new URLSearchParams({ workbench: 'true' });
     if (st.group && st.group.accounts && st.group.accounts.length) {
-      return '/api/benchmark?accounts=' + encodeURIComponent(st.group.accounts.join(','));
+      params.set('accounts', st.group.accounts.join(','));
+    } else if (st.acct !== 'all') {
+      params.set('account', st.acct);
     }
-    if (st.acct && st.acct !== 'all') return '/api/benchmark?account=' + encodeURIComponent(st.acct);
-    return '/api/benchmark';
+    if (refresh) params.set('refresh', 'true');
+    return '/api/benchmark?' + params.toString();
   }
 
-  async function fetchData() {
-    const r = await fetch(apiUrl(), { cache: 'no-store', credentials: 'same-origin' });
+  async function fetchData(url) {
+    const r = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const j = await r.json();
     if (!window.BENCH_DERIVE) throw new Error('derive.js 未加载');
     return window.BENCH_DERIVE(j);
   }
 
-  async function load(force) {
+  async function load(force, refresh = false) {
     const ok = await ensure();
     if (!ok) return;
-    if (st.loading) return;
-    if (!force && st.D && $('#b96-drawer') && $('#b96-drawer').classList.contains('on')) return;
+    if (!force && st.D && (st.video || $('#b96-drawer').classList.contains('on'))) return;
 
-    st.loading = true;
-    if (!st.D) showLoading('正在读取 /api/benchmark …');
+    const url = apiUrl(refresh);
+    if (pendingUrl === url) return;
+    const request = ++requestId;
+    pendingUrl = url;
+    const notice = $('#b96-refresh-error');
+    const refreshButton = $('[data-act="refresh"]');
+    refreshButton.disabled = true;
+    refreshButton.textContent = '刷新中…';
+    notice.hidden = true;
+
+    if (!st.D) showLoading('正在读取对标数据…');
     try {
-      const D = await fetchData();
+      const D = await fetchData(url);
+      if (request !== requestId) return;
       st.D = D;
-      st.error = null;
       fillAccountOptions(D);
       renderAll();
+      if (st.video) renderVideoDetail(currentVideo());
       hideLoading();
     } catch (err) {
-      console.error('[bench-s096] load failed', err);
-      st.error = err;
-      showLoading('读取 /api/benchmark 失败：' + (err && err.message ? err.message : err), true);
+      if (request !== requestId) return;
+      if (st.D) {
+        notice.textContent = '读取失败，仍显示 ' + st.D.meta.asOf + ' 的快照。可点击刷新重试。';
+        notice.hidden = false;
+      } else {
+        showLoading('对标数据读取失败：' + (err.message || '连接异常'), true);
+      }
     } finally {
-      st.loading = false;
+      if (request === requestId) {
+        pendingUrl = '';
+        refreshButton.disabled = false;
+        refreshButton.textContent = '刷新';
+      }
     }
   }
 
@@ -428,8 +568,7 @@
   function pickAccount(v) {
     st.acct = v || 'all';
     st.group = null;
-    st.page = 1;
-    load(true);
+    changeScope();
   }
 
   function setGroup(accounts, gid) {
@@ -437,13 +576,19 @@
     if (!list.length) return;
     st.group = { gid: gid || '', accounts: list };
     st.acct = 'all';
-    st.page = 1;
-    load(true);
+    changeScope();
   }
 
   function clearGroup() {
     st.group = null;
+    changeScope();
+  }
+
+  function changeScope() {
+    closeVideo();
     st.page = 1;
+    const list = $('#b96-vscroll');
+    if (list) list.scrollTop = 0;
     load(true);
   }
 
@@ -516,14 +661,15 @@
     });
 
     const quad = [
-      { arr: q.hh, t: '标杆', d: '高播放 · 高互动', tone: 'ok' },
-      { arr: q.hl, t: '流量', d: '高播放 · 低互动', tone: '' },
-      { arr: q.lh, t: '潜力', d: '低播放 · 高互动', tone: '' },
-      { arr: q.ll, t: '沉寂', d: '低播放 · 低互动', tone: 'bad' }
+      { key: 'hh', d: '高播放 · 高互动', tone: 'ok' },
+      { key: 'hl', d: '高播放 · 低互动', tone: '' },
+      { key: 'lh', d: '低播放 · 高互动', tone: '' },
+      { key: 'll', d: '低播放 · 低互动', tone: 'bad' }
     ];
     $('#b96-leg').innerHTML = quad.map((x) => {
-      const arr = x.arr.slice().sort((a, b) => b.total_plays - a.total_plays);
-      return '<div class="a10-q"><div class="a10-qh"><i class="dot ' + (x.tone || '') + '"></i><b>' + x.t + '</b>' +
+      const arr = q[x.key].slice().sort((a, b) => b.total_plays - a.total_plays);
+      return '<div class="a10-q"><div class="a10-qh"><i class="dot ' + (x.tone || '') + '"></i>' +
+        '<button type="button" class="b96-quad-button" data-quad="' + x.key + '" aria-label="查看' + QUADRANTS[x.key] + '账号的视频">' + QUADRANTS[x.key] + '</button>' +
         '<span class="tiny muted">' + x.d + '</span><b class="a10-qn tnum">' + arr.length + '</b></div>' +
         '<div class="a10-ql">' + arr.slice(0, 3).map((a) =>
           '<span class="b-tag" data-acc="' + esc(a.account) + '">' + esc(a.account) + '<i>' + S().nf(a.total_plays) + '</i></span>').join('') +
@@ -620,6 +766,62 @@
   }
 
   /* ── 视频明细 ─────────────────────────────────────────── */
+  function selectTab(tab) {
+    if (tab !== 'videos') closeVideo();
+    $('#b96-videos').hidden = tab !== 'videos';
+    $('#b96-insights').hidden = tab !== 'insights';
+    $$('[data-tab]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.tab === tab)));
+  }
+
+  function setFilter(key, value) {
+    if (key === 'q') clearTimeout(qTimer);
+    st[key] = value;
+    st.page = 1;
+    $('#b96-vscroll').scrollTop = 0;
+    if (st.D) renderVideos();
+  }
+
+  function filterChips() {
+    const inputs = { q: '搜索 ' + st.q.trim(), days: '近 ' + st.days + ' 天', plays: '播放 ≥ ' + S().nf(st.plays),
+      prod: st.prod === 'yes' ? '已挂车' : '未挂车', src: st.src === 'scrape' ? '抓取快照' : '台账补录', quad: QUADRANTS[st.quad] };
+    const box = $('#b96-chips');
+    const chips = [];
+    for (const [key, label] of Object.entries(inputs)) {
+      const input = $('#b96-' + key);
+      if (input.value !== String(st[key]) && !(key === 'q' && input === shadow.activeElement)) input.value = st[key];
+      if (st[key] && (key !== 'q' || st.q.trim())) {
+        chips.push('<button type="button" class="chip acc" data-clear-filter="' + key + '" aria-label="清除' + esc(label) + '">' + esc(label) + ' ×</button>');
+      }
+    }
+    const riseButton = $('[data-act="rising"]');
+    riseButton.setAttribute('aria-pressed', String(st.rise));
+    if (st.rise) {
+      const excluded = st.D.videos.filter((v) => v.delta == null && v.mediaType !== 'image').length;
+      chips.push('<span class="muted tiny">日增大于 0' + (excluded ? ' · 当前账号范围 ' + S().int(excluded) + ' 条缺少可比较快照' : '') + '</span>');
+    }
+    box.innerHTML = chips.join('');
+    box.hidden = !chips.length;
+  }
+
+  function videoKey(v) {
+    return JSON.stringify([v.account, v.vid || v.url || [v.title, v.publish_time]]);
+  }
+
+  function metric(v, key) {
+    if (v.missingMetrics.includes(key) || v[key] == null || v[key] === '') return null;
+    return v[key];
+  }
+
+  function metricText(v, key) {
+    const value = metric(v, key);
+    if (key === 'delta') return value == null ? (v.growthStatus === 'baseline' ? '待建立基线' : '暂无增量') :
+      (value > 0 ? '+' : '') + S().int(value);
+    if (value == null) return '—';
+    return key === 'engagement' ? S().pct(value, 2) : S().int(value);
+  }
+
+  function hasProduct(v) { return !!(v.products.length || v.productLink); }
+
   function videoList() {
     const D = st.D;
     const q = st.q.trim().toLowerCase();
@@ -636,21 +838,43 @@
         return Number.isFinite(t) && t >= cut;
       });
     }
-    if (st.plays) rows = rows.filter((v) => (v.plays || 0) >= Number(st.plays));
-    if (st.prod === 'yes') rows = rows.filter((v) => v.products && v.products.length);
-    if (st.prod === 'no') rows = rows.filter((v) => !(v.products && v.products.length));
+    if (st.plays) rows = rows.filter((v) => metric(v, 'plays') >= st.plays);
+    if (st.prod) rows = rows.filter((v) => hasProduct(v) === (st.prod === 'yes'));
     if (st.src) rows = rows.filter((v) => v.source === st.src);
+    if (st.quad) {
+      const names = new Set(quadCounts().q[st.quad].map((a) => a.account));
+      rows = rows.filter((v) => names.has(v.account));
+    }
+    if (st.rise) rows = rows.filter((v) => v.delta > 0);
 
-    const cmp = {
-      plays_desc: (a, b) => (b.plays || 0) - (a.plays || 0),
-      plays_asc: (a, b) => (a.plays || 0) - (b.plays || 0),
-      likes_desc: (a, b) => (b.likes || 0) - (a.likes || 0),
-      engagement_desc: (a, b) => (b.engagement || 0) - (a.engagement || 0),
-      time_desc: (a, b) => (a.publish_time < b.publish_time ? 1 : -1),
-      time_asc: (a, b) => (a.publish_time < b.publish_time ? -1 : 1)
-    }[st.sort] || ((a, b) => (b.plays || 0) - (a.plays || 0));
+    const [key, dir] = st.sort.split('_');
+    const field = SORTS[key].field;
+    return rows.sort((a, b) => {
+      const x = metric(a, field), y = metric(b, field);
+      if (x == null || y == null) return Number(x == null) - Number(y == null);
+      const order = x === y ? 0 : x < y ? -1 : 1;
+      return dir === 'asc' ? order : -order;
+    });
+  }
 
-    return rows.sort(cmp);
+  function videoRow(v, sorted) {
+    const title = v.title || '（无标题）';
+    const key = videoKey(v);
+    const completed = handedOff.has(key) && window.RV2?.hasReport?.(v.vid);
+    const handoff = handedOff.has(key) ? (completed ? '已反推' : '已带入') : '';
+    const selected = key === st.video;
+    const cell = (column, value, classes = 'r tnum') => '<td data-column="' + column + '" class="' + classes +
+      (sorted === column ? ' is-sorted' : '') + '">' + value + '</td>';
+    const numbers = ['plays', 'delta', 'likes', 'engagement'].map((key) => cell(key, esc(metricText(v, key)),
+      'r tnum' + (metric(v, key) == null ? ' muted' : key === 'delta' && v.delta > 0 ? ' b96-positive' : ''))).join('');
+    const transcript = { available: '可查看', missing: '暂无', not_applicable: '图文' }[v.transcriptStatus] || '—';
+    return '<tr data-video-key="' + esc(key) + '" class="' + (selected ? 'is-selected' : '') + '">' +
+      '<td class="b-td-acc" title="' + esc(v.account) + '">' + esc(v.account) + '</td>' +
+      '<td class="b-td-title"><button type="button" class="b96-row-title" aria-controls="b96-video-detail" aria-expanded="' + selected +
+      '" title="' + esc(title) + '">' + esc(title) + '</button>' + (handoff ? '<span class="b96-handoff">' + handoff + '</span>' : '') + '</td>' +
+      cell('time', esc(v.day || '—'), 'r muted tnum') + numbers +
+      cell('product', hasProduct(v) ? '<span class="chip acc">已挂车</span>' : '—', 'c') +
+      cell('transcript', transcript, v.transcriptStatus === 'available' ? 'c' : 'c muted') + '</tr>';
   }
 
   function renderVideos() {
@@ -662,13 +886,29 @@
     if (st.page < 1) st.page = 1;
     const start = (st.page - 1) * st.size;
     const slice = rows.slice(start, start + st.size);
+    const [sorted, dir] = st.sort.split('_');
+    $('#b96-sort').value = st.sort;
+    $$('[data-vsort]').forEach((button) => {
+      const th = button.parentElement;
+      const active = sorted === button.dataset.vsort;
+      th.classList.toggle('is-sorted', active);
+      if (active) th.setAttribute('aria-sort', dir === 'asc' ? 'ascending' : 'descending');
+      else th.removeAttribute('aria-sort');
+    });
+    filterChips();
+    if (st.video && !slice.some((v) => videoKey(v) === st.video)) closeVideo();
 
     const body = $('#b96-vbody');
-    if (body) body.innerHTML = slice.map((v) => U().videoRow(v)).join('');
-    fadeIn(body);
+    body.innerHTML = slice.map((v) => videoRow(v, sorted)).join('');
 
-    const cnt = $('#b96-vcount');
-    if (cnt) cnt.textContent = '共 ' + S().int(total) + ' 条';
+    const empty = $('#b96-empty');
+    empty.hidden = !!total;
+    $('#b96-vscroll').hidden = !total;
+    if (!total) {
+      empty.innerHTML = D.videos.length
+        ? '<p>没有符合当前条件的视频</p><button type="button" class="btn ghost" data-act="vreset">清除筛选</button>'
+        : '<p>当前账号范围还没有采集到视频</p><button type="button" class="btn ghost" data-act="run">去一键运行</button>';
+    }
 
     const sub = $('#b96-vsub');
     if (sub) sub.textContent = '筛选后 ' + S().int(total) + ' / ' + S().int(D.videos.length) + ' 条';
@@ -697,12 +937,166 @@
   }
 
   function changePage(p) {
-    if (!Number.isFinite(p)) return;
+    if (!Number.isFinite(p) || !st.D) return;
     st.page = p;
+    $('#b96-vscroll').scrollTop = 0;
     renderVideos();
   }
 
   /* ── 抽屉 ─────────────────────────────────────────────── */
+  function currentVideo() {
+    return st.D?.videos.find((v) => videoKey(v) === st.video);
+  }
+
+  function updateSelection() {
+    $$('[data-video-key]').forEach((row) => {
+      const selected = row.dataset.videoKey === st.video;
+      row.classList.toggle('is-selected', selected);
+      row.querySelector('.b96-row-title').setAttribute('aria-expanded', String(selected));
+    });
+  }
+
+  function videoLinks(v) {
+    let original = '', reverse = '';
+    try {
+      const url = new URL(v.url);
+      if (/^https?:$/.test(url.protocol) && /(^|\.)tiktok\.com$/i.test(url.hostname)) {
+        original = url.href;
+        if (/\/video\/\d{6,}(?:\/|$)/.test(url.pathname) || /^(vm|vt)\.tiktok\.com$/i.test(url.hostname)) reverse = original;
+      }
+    } catch (_) { /* 台账可能只有 ID */ }
+    if (!reverse && v.mediaType !== 'image' && !/\/photo\//.test(original) && /^\d{15,25}$/.test(v.vid)) reverse = String(v.vid);
+    return { original, reverse };
+  }
+
+  function expandableText(text) {
+    const clean = text.trim();
+    if (clean.length <= 200 && clean.split('\n').length <= 4) return '<p class="b96-detail-text">' + esc(clean) + '</p>';
+    return '<p class="b96-detail-text b96-text-preview">' + esc(clean.split('\n').slice(0, 4).join('\n').slice(0, 200)) + '…</p>' +
+      '<details class="b96-detail-text"><summary>展开全文</summary><p>' + esc(clean) + '</p></details>';
+  }
+
+  async function renderTranscript(v, box) {
+    const request = ++transcriptRequest;
+    if (v.transcriptStatus === 'not_applicable') { box.textContent = '图文内容无需口播转写'; return; }
+    if (!v.transcriptStatus) { box.textContent = '转写接口尚未加载，请重启工作台服务后刷新。'; return; }
+    if (v.transcriptStatus !== 'available') { box.textContent = '暂无本地转写'; return; }
+    box.textContent = '正在读取本地转写…';
+    try {
+      const url = '/api/benchmark/' + encodeURIComponent(v.vid) + '/transcript?account=' + encodeURIComponent(v.account);
+      const response = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const data = await response.json();
+      if (request !== transcriptRequest) return;
+      if (data.status === 'available' && data.text) {
+        box.classList.remove('muted');
+        box.innerHTML = expandableText(data.text) +
+          (data.truncated ? '<p class="muted">转写过长，已截断显示。</p>' : '') +
+          '<button type="button" class="btn ghost sm" data-act="copy-transcript">复制口播</button>';
+        box.dataset.transcript = data.text;
+        return;
+      }
+      if (data.status === 'missing') { box.textContent = '暂无本地转写'; return; }
+      throw new Error('unavailable');
+    } catch (_) {
+      if (request === transcriptRequest) {
+        box.innerHTML = '暂时无法读取本地转写 <button type="button" class="btn ghost sm" data-act="retry-transcript">重试</button>';
+      }
+    }
+  }
+
+  function renderVideoDetail(v, focus = false) {
+    if (!v) return;
+    const detail = $('#b96-video-detail');
+    const { original, reverse } = videoLinks(v);
+    const visibleKeys = $$('[data-video-key]').map((row) => row.dataset.videoKey);
+    const index = visibleKeys.indexOf(st.video);
+    const metrics = [['累计播放', 'plays'], ['日增', 'delta'], ['互动率', 'engagement'],
+      ['点赞', 'likes'], ['评论', 'comments'], ['分享', 'shares'], ['收藏', 'collects']].map(([label, key]) =>
+      '<div><dt>' + label + '</dt><dd>' + esc(metricText(v, key)) + '</dd></div>').join('');
+    detail.innerHTML = '<header class="b96-detail-head">' +
+      '<div class="b96-detail-top"><span class="muted">' + esc(v.account) + ' · ' + esc(v.publish_time || '发布时间未知') + '</span>' +
+      '<div><button type="button" class="btn ghost sm" data-act="video-prev" aria-label="上一条视频（K）"' + (index <= 0 ? ' disabled' : '') + '>↑</button> ' +
+      '<button type="button" class="btn ghost sm" data-act="video-next" aria-label="下一条视频（J）"' + (index === visibleKeys.length - 1 ? ' disabled' : '') + '>↓</button> ' +
+      '<button type="button" class="btn ghost sm" data-act="video-close">关闭</button></div></div>' +
+      '<h3 tabindex="-1">' + esc(v.title || '（无标题）') + '</h3></header>' +
+      '<div class="b96-detail-body"><dl class="b96-detail-metrics">' + metrics + '</dl>' +
+      '<h4>口播</h4><div id="b96-transcript" class="muted" role="status"></div>' +
+      '<h4>文案</h4>' + (v.desc.trim() ? expandableText(v.desc) +
+        '<button type="button" class="btn ghost sm" data-act="copy-caption">复制文案</button>' : '<p class="muted">暂无文案</p>') +
+      '<h4>挂载商品</h4>' + (v.products.length ? v.products.map((p) => '<p>' + esc(p.title || '商品名称未采集') + '</p>').join('') :
+        '<p class="muted">' + (v.productLink ? '已记录商品链接，暂无商品名称' : '暂无商品记录') + '</p>') + '</div>' +
+      '<footer class="b96-detail-footer">' + (original ? '<a class="btn ghost sm" href="' + esc(original) +
+        '" target="_blank" rel="noopener noreferrer">打开原帖 ↗</a>' : '') +
+      (reverse ? '<button type="button" class="btn pri" data-act="handoff">反推这条 →</button>' :
+        '<span class="muted">暂无可用于反推的视频链接</span>') + '</footer>';
+    detail.hidden = false;
+    $('#b96-video-grid').classList.add('is-open');
+    renderTranscript(v, $('#b96-transcript'));
+    if (focus) detail.querySelector('h3').focus({ preventScroll: true });
+  }
+
+  function openVideo(key, focus = false) {
+    const video = st.D?.videos.find((v) => videoKey(v) === key);
+    if (!video) return;
+    st.video = key;
+    updateSelection();
+    renderVideoDetail(video, focus);
+    if (matchMedia('(max-width: 1050px)').matches) $('#b96-video-detail').scrollIntoView({ block: 'nearest' });
+  }
+
+  function stepVideo(direction, focus = false) {
+    const rows = $$('[data-video-key]');
+    const index = rows.findIndex((row) => row.dataset.videoKey === st.video);
+    const next = rows[index + direction];
+    if (index < 0 || !next) return;
+    openVideo(next.dataset.videoKey, focus);
+    const list = $('#b96-vscroll');
+    const rect = next.getBoundingClientRect(), frame = list.getBoundingClientRect();
+    const header = list.querySelector('thead').getBoundingClientRect().height;
+    if (rect.top < frame.top + header) list.scrollTop += rect.top - frame.top - header;
+    else if (rect.bottom > frame.bottom) list.scrollTop += rect.bottom - frame.bottom;
+  }
+
+  function closeVideo(restoreFocus = false) {
+    if (!st.video) return;
+    const selected = $('[data-video-key].is-selected');
+    st.video = '';
+    ++transcriptRequest;
+    $('#b96-video-detail').hidden = true;
+    $('#b96-video-grid').classList.remove('is-open');
+    updateSelection();
+    if (restoreFocus) selected?.querySelector('button').focus({ preventScroll: true });
+  }
+
+  function handoffVideo() {
+    const video = currentVideo();
+    const url = video && videoLinks(video).reverse;
+    if (!url || !window.openBenchmarkReverse) return;
+    const list = $('#b96-vscroll');
+    returnPosition = { top: list.scrollTop, left: list.scrollLeft, windowY: window.scrollY, key: st.video };
+    handedOff.add(st.video);
+    closeVideo();
+    window.openBenchmarkReverse(url);
+  }
+
+  function enter() {
+    if (returnPosition && st.D) {
+      const position = returnPosition;
+      returnPosition = null;
+      renderVideos();
+      requestAnimationFrame(() => {
+        if (!host.closest('.view.active')) return;
+        const list = $('#b96-vscroll');
+        list.scrollTo(position.left, position.top);
+        window.scrollTo(0, position.windowY);
+        const previous = $$('[data-video-key]').find((row) => row.dataset.videoKey === position.key);
+        previous?.querySelector('button').focus({ preventScroll: true });
+      });
+    }
+    return load(false);
+  }
+
   function openDrawer(key) {
     const d = U().detail(key, st.D);
     if (!d) return;
@@ -734,21 +1128,35 @@
   }
 
   function doAction(a) {
-    if (a === 'refresh') { toast('正在重新读取 /api/benchmark …'); load(true); return; }
+    if (a === 'refresh') { load(true, true); return; }
     if (a === 'retry') { load(true); return; }
+    if (a === 'video-close') { closeVideo(true); return; }
+    if (a === 'video-prev' || a === 'video-next') { stepVideo(a === 'video-next' ? 1 : -1, true); return; }
+    if (a === 'handoff') { handoffVideo(); return; }
+    if (a === 'retry-transcript') { const video = currentVideo(); if (video) renderTranscript(video, $('#b96-transcript')); return; }
+    if (a === 'copy-transcript' || a === 'copy-caption') {
+      const text = a === 'copy-transcript' ? $('#b96-transcript')?.dataset.transcript : currentVideo()?.desc;
+      if (!text || !navigator.clipboard) { toast('剪贴板暂不可用'); return; }
+      navigator.clipboard.writeText(text).then(() => toast('已复制'), () => toast('无法访问剪贴板'));
+      return;
+    }
+    if (a === 'run') { document.querySelector('.nav-item[data-view="run"]')?.click(); return; }
+    if (a === 'rising') {
+      st.rise = !st.rise;
+      setFilter('sort', st.rise ? 'delta_desc' : st.sort);
+      return;
+    }
+    if (a === 'scope-all') { clearGroup(); return; }
+    if (!st.D) return;
     if (a === 'export') { exportBrief(); return; }
     if (a === 'csvacc') { csvAccounts(); return; }
     if (a === 'csvvid') { csvVideos(); return; }
     if (a === 'vreset') {
-      st.q = ''; st.days = ''; st.plays = 0; st.prod = ''; st.src = ''; st.sort = 'plays_desc'; st.page = 1;
-      const q = $('#b96-q'); if (q) q.value = '';
-      ['b96-days', 'b96-prod', 'b96-src', 'b96-sort'].forEach((id) => { const el = $('#' + id); if (el) el.value = ''; });
-      const pl = $('#b96-plays'); if (pl) pl.value = '0';
-      const so = $('#b96-sort'); if (so) so.value = 'plays_desc';
-      renderVideos();
+      Object.assign(st, { days: '', plays: 0, prod: '', src: '', quad: '', rise: false, sort: 'plays_desc' });
+      $('#b96-q').value = '';
+      setFilter('q', '');
       return;
     }
-    if (a === 'scope-all') { clearGroup(); return; }
   }
 
   /* ── 导出 ─────────────────────────────────────────────── */
@@ -777,9 +1185,10 @@
   function csvVideos() {
     const D = st.D;
     const rows = videoList();
-    const head = ['账号', '标题', '发布', '播放', '点赞', '评论', '分享', '收藏', '互动率%', '商品数', '来源', '链接'];
-    const body = rows.map((v) => [v.account, v.title, v.fullDay, v.plays, v.likes, v.comments, v.shares,
-      v.collects, v.engagement, (v.products || []).length, v.source, v.url].map(q1).join(','));
+    const head = ['账号', '标题', '发布', '播放', '点赞', '评论', '分享', '收藏', '互动率%', '商品数', '来源', '链接', '日增', '日增状态'];
+    const body = rows.map((v) => [v.account, v.title, v.fullDay, metric(v, 'plays'), metric(v, 'likes'),
+      metric(v, 'comments'), metric(v, 'shares'), metric(v, 'collects'), metric(v, 'engagement'),
+      v.products.length, v.source, v.url, v.delta, v.delta == null ? metricText(v, 'delta') : ''].map(q1).join(','));
     download('bench_videos_' + D.meta.asOf.replace(/[-: ]/g, '') + '.csv', [head.join(','), ...body].join('\n'));
     toast('已导出 ' + rows.length + ' 条视频');
   }
@@ -813,18 +1222,12 @@
   /* ── 对外接口（app.js 调） ────────────────────────────── */
   window.BS96 = {
     load: load,
-    refresh: () => load(true),
-    enter: () => load(false),
+    refresh: () => load(true, true),
+    enter: enter,
     setGroup: setGroup,
     clearGroup: clearGroup,
     get active() { return booted; },
     get scope() { return st.group ? 'group' : st.acct; }
   };
 
-  /* 页面进入 bench 时如果元素已在，先热一次（app.js 也会调 load） */
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => { if (document.getElementById(HOST_ID)) load(false); });
-  } else if (document.getElementById(HOST_ID)) {
-    load(false);
-  }
 })();

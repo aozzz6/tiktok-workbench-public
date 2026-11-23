@@ -33,6 +33,10 @@ import config
 _cache: dict = {"ts": 0.0, "data": None}
 
 _TAG_RE = re.compile(r"#(\w[\w-]+)")
+_ACCOUNT_RE = re.compile(r"[A-Za-z0-9_.]{1,32}")
+_VIDEO_RE = re.compile(r"[0-9]{1,25}")
+_PLAYBACK_FIELDS = {"plays": "playCount", "likes": "diggCount", "comments": "commentCount",
+                    "shares": "shareCount", "collects": "collectCount"}
 
 # FastMoss 商品详情页模板（由 MCP fastmoss_detail_url_examples 返回，勿臆造）
 _FASTMOSS_PRODUCT_URL = "https://www.fastmoss.com/e-commerce/detail/{}"
@@ -44,14 +48,23 @@ _PRODUCT_VIDEOS_N = 5
 
 
 # ─────────────────────────── 数据读取 ───────────────────────────
-def _num(v) -> int:
-    """stats 里 collectCount 可能是字符串，统一转 int。"""
-    if v is None:
-        return 0
+def _metric_number(v) -> int | None:
     try:
         return int(float(v))
     except (ValueError, TypeError, OverflowError):
-        return 0
+        return None
+
+
+def _num(v) -> int:
+    """stats 里 collectCount 可能是字符串，统一转 int。"""
+    return _metric_number(v) or 0
+
+
+def _missing_metrics(raw: dict) -> list[str]:
+    missing = [key for key, value in raw.items() if _metric_number(value) is None]
+    if missing or not _num(raw.get("plays")):
+        missing.append("engagement")
+    return missing
 
 
 def _load_scrape(account: str) -> list[dict]:
@@ -181,6 +194,7 @@ def _ledger_rows() -> dict[str, list[dict]]:
                         "comments": cmt,
                         "shares": shr,
                         "collects": col,
+                        "missing_metrics": _missing_metrics({key: cell(key) for key in _PLAYBACK_FIELDS}),
                         "publish_time": str(cell("time") or "").strip(),
                         "url": link if link.startswith("http") else f"https://www.tiktok.com/@{acc}/video/{vid}",
                         "products": [],                       # 台账只有商品链接，无商品 id
@@ -278,6 +292,7 @@ def _aggregate():
                 "comments": _num(stats.get("commentCount")),
                 "shares": _num(stats.get("shareCount")),
                 "collects": _num(stats.get("collectCount")),
+                "missing_metrics": _missing_metrics({key: stats.get(field) for key, field in _PLAYBACK_FIELDS.items()}),
                 "publish_time": it.get("publish_time_gmt8", ""),
                 "url": it.get("url", ""),
                 "products": prods.get(vid, []) if vid else [],
@@ -412,6 +427,69 @@ def _flatten_videos(video_map) -> list[dict]:
             out.append(row)
     out.sort(key=lambda v: v["plays"], reverse=True)
     return out
+
+
+def _transcript_dirs(account: str, account_config: dict) -> list[Path]:
+    if not _ACCOUNT_RE.fullmatch(account) or account in {".", ".."}:
+        return []
+    configured = account_config.get("audio_dir")
+    roots = [Path(configured)] if configured else []
+    roots.append(config.OUTPUT_DIR / f"{account}_audio")
+    return list(dict.fromkeys(root / "transcripts" for root in roots))
+
+
+def _configured_accounts() -> dict:
+    return {row.get("account"): row for row in config.load_accounts(include_inactive=True).get("accounts", [])}
+
+
+def _transcript_ids(account: str, account_config: dict) -> set[str]:
+    pattern = re.compile(rf"(?:{re.escape(account)}_)?([0-9]{{1,25}})_transcript\.txt")
+    ids = set()
+    for directory in _transcript_dirs(account, account_config):
+        try:
+            root = directory.resolve()
+            for entry in directory.iterdir():
+                match = pattern.fullmatch(entry.name)
+                if match and entry.resolve().parent == root and entry.is_file() and entry.stat().st_size:
+                    ids.add(match[1])
+        except OSError:
+            continue
+    return ids
+
+
+def add_transcript_status(videos: list[dict]) -> None:
+    if not videos:
+        return
+    configured = _configured_accounts()
+    by_account = {account: _transcript_ids(account, configured.get(account, {})) for account in
+                  {video["account"] for video in videos if video.get("media_type") != "image"}}
+    for video in videos:
+        if video.get("media_type") == "image" or "/photo/" in (video.get("url") or ""):
+            video["transcript_status"] = "not_applicable"
+        else:
+            video["transcript_status"] = "available" if video["vid"] in by_account[video["account"]] else "missing"
+
+
+def read_video_transcript(account: str, vid: str) -> dict:
+    if not _VIDEO_RE.fullmatch(vid):
+        return {"status": "missing"}
+    limit = 100_000
+    failed = False
+    for directory in _transcript_dirs(account, _configured_accounts().get(account, {})):
+        for name in (f"{account}_{vid}_transcript.txt", f"{vid}_transcript.txt"):
+            try:
+                path = (directory / name).resolve()
+                if path.parent != directory.resolve() or not path.is_file():
+                    continue
+                with path.open(encoding="utf-8-sig") as file:
+                    text = file.read(limit + 1).strip()
+                if text:
+                    return {"status": "available", "text": text[:limit], "truncated": len(text) > limit}
+            except FileNotFoundError:
+                continue
+            except (OSError, UnicodeError):
+                failed = True
+    return {"status": "unavailable" if failed else "missing"}
 
 
 def _build_takeaways(kpis, patterns, account_rows) -> list[dict]:

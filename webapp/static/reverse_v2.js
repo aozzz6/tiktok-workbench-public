@@ -32,6 +32,7 @@
   var MOUNTED = false;
   var INITED = false;
   var PAGE_SIZE = 6;
+  var BENCHMARK_ENTRY = null;
 
   /* ── 小工具 ────────────────────────────────────────── */
   function $(s, r) { return (r || document).querySelector(s); }
@@ -229,7 +230,8 @@
     }).join('');
     var mode = localMode();
     return '<section class="u-compose" data-unit="compose">' +
-      '<header class="u-compose-h"><h2>新建反推</h2><span class="tiny muted">第一步不花 token，只出素材</span></header>' +
+      '<header class="u-compose-h"><h2>新建反推</h2><span class="tiny muted">第一步不花 token，只出素材</span>' +
+        '<span id="rqv-benchmark-source" hidden><button type="button" class="btn ghost" id="rqv-benchmark-back">← 返回对标分析</button></span></header>' +
       '<div class="u-compose-row">' +
         '<label class="u-field grow"><span>视频链接</span>' +
           '<input id="rqv-url" type="text" autocomplete="off" spellcheck="false" placeholder="https://www.tiktok.com/@xxx/video/123456… 或 vm.tiktok.com 短链，也接受纯 video id">' +
@@ -293,12 +295,27 @@
     HOST.innerHTML = shellHtml();
     $('#rqv-refresh').addEventListener('click', function () { refresh(true); });
     $('#rqv-create').addEventListener('click', create);
+    $('#rqv-benchmark-back').addEventListener('click', function () { history.back(); });
     $('#rqv-url').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); create(); }   /* 粘完链接直接回车也能生成 */
     });
     $('#rqv-import').addEventListener('click', function () { $('#rqv-file').click(); });
     $('#rqv-file').addEventListener('change', function (e) { importVideo(e.target.files[0]); });
     $('#rqv-mode').addEventListener('change', function () { try { localStorage.setItem(MODE_KEY, this.value); } catch (e) {} });
+    syncBenchmarkSource();
+  }
+
+  function syncBenchmarkSource() {
+    var source = $('#rqv-benchmark-source');
+    if (!source) return;
+    var state = history.state;
+    var url = location.hash === '#reverse' && state && state.benchmarkVideo;
+    source.hidden = !url;
+    if (!url || BENCHMARK_ENTRY === state.benchmarkEntry) return;
+    BENCHMARK_ENTRY = state.benchmarkEntry;
+    var input = $('#rqv-url');
+    input.value = url;
+    input.focus();
   }
 
   /* ── 渲染：各区块 ──────────────────────────────────── */
@@ -896,6 +913,7 @@
     if (!HOST) HOST = document.getElementById('rv2');
     if (!HOST) return;
     if (!MOUNTED) { mount(); init(); }
+    syncBenchmarkSource();
     /* 2026-10-31 修复 P1-2：init 可能因 INITED 已置真而提前返回（首屏 mount 晚了一步），
        这里补一次 refresh，保证第一次进入就有任务队列。 */
     refresh(false);
@@ -906,7 +924,13 @@
   });
   else if (document.getElementById('rv2')) { mount(); init(); }
 
-  window.RV2 = { refresh: function () { refresh(true); }, state: function () { return { focus: FOCUS, tasks: D && D.tasks.length }; } };
+  window.RV2 = {
+    refresh: function () { refresh(true); },
+    state: function () { return { focus: FOCUS, tasks: D && D.tasks.length }; },
+    hasReport: function (vid) { return !!(D && D.tasks.some(function (task) { return task.id === String(vid) && task.hasReport; })); },
+    syncBenchmarkSource: syncBenchmarkSource,
+    leaveBenchmarkSource: function () { BENCHMARK_ENTRY = null; }
+  };
   /* 兼容旧内联调用 */
   window.reverseCreate = create;
   window.reverseImport = importVideo;

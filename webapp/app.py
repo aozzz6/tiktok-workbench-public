@@ -1880,7 +1880,7 @@ def ledger_sheet(name: str = Query(...), file: str | None = None,
 # ────────────────────────── 对标分析（第二版 · A 方案） ──────────────────────────
 @app.get("/api/benchmark")
 def benchmark_view(account: str | None = None, accounts: str | None = None,
-                   refresh: bool = False) -> dict:
+                   refresh: bool = False, workbench: bool = False) -> dict:
     """对标分析数据：账号→视频→爆款规律→可借鉴点（聚合 scrape+products+台账）。
 
     账号维度、视频排行、爆款规律、可借鉴点。数据源为本地真实产物，
@@ -1890,7 +1890,20 @@ def benchmark_view(account: str | None = None, accounts: str | None = None,
     传 accounts 时按子集聚合 KPI/patterns。
     """
     acc_list = list(dict.fromkeys(a.strip() for a in accounts.split(",") if a.strip())) if accounts is not None else None
-    return benchmark.build(account=account, refresh=refresh, accounts=acc_list)
+    data = benchmark.build(account=account, refresh=refresh, accounts=acc_list)
+    if workbench:
+        videos = data["videos"]
+        growth = daily_insights.benchmark_growth(videos)
+        benchmark.add_transcript_status(videos)
+        for video in videos:
+            key = (video["account"].strip().lstrip("@").lower(), video["vid"])
+            video["play_growth"] = growth.get(key)
+    return data
+
+
+@app.get("/api/benchmark/{vid}/transcript")
+def benchmark_video_transcript(vid: str, account: str) -> dict:
+    return benchmark.read_video_transcript(account, vid)
 
 
 # 用本机 Excel 打开（零额外依赖：走 PowerShell COM）

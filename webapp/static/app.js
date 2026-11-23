@@ -167,12 +167,22 @@ function switchView(name) {
   }
   if (name === "overview") loadOverview(true);
   if (name === "reverse" && window.RV_load) window.RV_load();   // 提示词反推（reverse.js）
+  else window.RV2?.leaveBenchmarkSource?.();
   if (name === "brief") window.dailyBrief?.refresh();
   if (name === "prompt" && window.PV2) window.PV2.mount();       // 提示词优化（T106 中控台）
-  if (name === "bench") loadBench(true);
+  if (name === "bench") {
+    if (window.BS96) window.BS96.enter();
+    else loadBench(true);
+  }
   if (name === "accounts") loadAccounts(true);
   if (name === "schedule") window.dailySchedule?.refresh();
   if (name === "aiconf" && window.AIA) window.AIA.load();   // AI 接入（ai_admin.js）
+}
+
+function openBenchmarkReverse(url) {
+  if (location.hash !== "#bench") history.pushState(null, "", "#bench");
+  history.pushState({ benchmarkVideo: url, benchmarkEntry: Date.now() }, "", "#reverse");
+  switchView("reverse");
 }
 
 $$(".nav-item").forEach((n) => {
@@ -184,6 +194,7 @@ $$(".nav-item").forEach((n) => {
     try {
       if (name && location.hash !== "#" + name) history.pushState(null, "", "#" + name);
     } catch (_) { /* file:// 等环境忽略 */ }
+    if (name === "reverse") window.RV2?.syncBenchmarkSource?.();
   });
 });
 
