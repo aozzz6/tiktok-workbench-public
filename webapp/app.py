@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 
 import ai_repair
 import config
+import daily_insights
 import groups as account_groups
 import llm
 import pipeline_ops
@@ -63,8 +64,8 @@ app.include_router(reverse_voice.router)
 # 只要新增/改动了启动器必须依赖的路由，就把版本 +1 并把能力写进 FEATURES。
 #   1 = 无 /api/repair/*、/api/ai/*（2026-10-24 之前的进程）
 #   2 = 一键修复 + AI 接入（2026-10-24）
-API_VERSION = 6
-API_FEATURES = ("repair", "ai", "prompt_optimizer", "reverse_voice", "schedule")
+API_VERSION = 7
+API_FEATURES = ("repair", "ai", "prompt_optimizer", "reverse_voice", "schedule", "daily_insights")
 
 
 @app.exception_handler(account_groups.GroupStorageError)
@@ -119,6 +120,11 @@ def health() -> dict:
     return {"ok": True, "ts": time.time(), "api_version": API_VERSION,
             "version": version,
             "features": list(API_FEATURES), "diagnostics": config.diagnostics()}
+
+
+@app.get("/api/daily-insights")
+def get_daily_insights() -> dict:
+    return daily_insights.get_daily_insights()
 
 
 @app.get("/api/config")

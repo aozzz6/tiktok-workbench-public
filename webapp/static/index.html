@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/static/tablekit.css?v=20261022B" />
 <link rel="stylesheet" href="/static/style.v3.css?v=20261022B" />
 <link rel="stylesheet" href="/static/daily_schedule.css?v=1.2.0" />
+<link rel="stylesheet" href="/static/daily_brief.css?v=1" />
 <link rel="stylesheet" href="/static/prompt_optimizer.css?v=20261027SC1" />
 <link rel="stylesheet" href="/static/accounts_s236.css?v=20261028A" />
 <link rel="stylesheet" href="/static/paper-ai.css?v=20261028B" />
@@ -37,7 +38,8 @@
       </div>
     </div>
     <nav id="nav">
-      <a class="nav-item active" data-view="overview" href="#overview" aria-current="page"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>总览看板</a>
+      <a class="nav-item active" data-view="brief" href="#brief" aria-current="page"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1"/><path d="M4.5 5.5h7M4.5 8h3M4.5 10.5h6"/></svg>每日简报</a>
+      <a class="nav-item" data-view="overview" href="#overview"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>总览看板</a>
       <a class="nav-item" data-view="bench" href="#bench"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5V9M6.2 13.5V5.5M9.8 13.5V7.5M13.5 13.5V2.5"/></svg>对标分析</a>
       <a class="nav-item" data-view="reverse" href="#reverse"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="4.5" height="10" rx="1"/><path d="M9 5.2h4.8M9 8h4.8M9 10.8h3"/></svg>提示词反推</a>
       <a class="nav-item" data-view="prompt" href="#prompt"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l1.5 3.2 3.5.5-2.5 2.4.6 3.4L8 9.6l-3.1 1.5.6-3.4L3 5.3l3.5-.5z"/><path d="M12.6 11.4l.7 1.5 1.6.2-1.2 1.1.3 1.6-1.4-.8-1.4.8.3-1.6-1.2-1.1 1.6-.2z"/></svg>提示词优化</a>
@@ -53,8 +55,38 @@
   </aside>
 
   <main class="main">
+    <section id="view-brief" class="view active" aria-labelledby="brief-title">
+      <header class="brief-head">
+        <div>
+          <p id="brief-date" class="brief-date"></p>
+          <h1 id="brief-title">每日简报</h1>
+          <p id="brief-coverage" class="brief-coverage"></p>
+        </div>
+        <button type="button" class="btn" id="brief-refresh">刷新简报</button>
+      </header>
+      <p id="brief-status" role="status">正在读取简报…</p>
+      <div id="brief-sections" class="brief-grid" aria-busy="true">
+        <section class="brief-panel" aria-labelledby="brief-new-title">
+          <header class="brief-section-head"><h2 id="brief-new-title">今天新发</h2><span id="brief-new-count" class="brief-count"></span></header>
+          <p class="brief-caption">按发布时间，从新到旧</p>
+          <div id="brief-new-list"></div>
+        </section>
+        <section class="brief-panel" aria-labelledby="brief-growing-title">
+          <header class="brief-section-head"><h2 id="brief-growing-title">正在起量</h2><span id="brief-growing-count" class="brief-count"></span></header>
+          <p class="brief-caption">此前发布的视频，按较昨日新增播放排序</p>
+          <div id="brief-growing-list"></div>
+        </section>
+        <section class="brief-panel brief-topics" aria-labelledby="brief-topics-title">
+          <header class="brief-section-head"><h2 id="brief-topics-title">多账号热门选题</h2><span id="brief-topics-count" class="brief-count"></span></header>
+          <p class="brief-caption">近三天至少两个账号使用同一标签，且播放量均达到各自在相近发布时长下历史中位数的 1.5 倍。</p>
+          <div id="brief-topics-list"></div>
+        </section>
+      </div>
+      <div id="brief-notes" class="brief-notes" hidden></div>
+    </section>
+
     <!-- ── 总览 ── -->
-    <section id="view-overview" class="view active">
+    <section id="view-overview" class="view">
       <header class="page-head">
         <div>
           <h1>总览看板</h1>
@@ -511,7 +543,8 @@
   <script src="/static/tablekit.js?v=20261022B"></script>
 <script src="/static/accounts_s236.js?v=20261028A"></script>
 <script src="/static/daily_schedule.js?v=1.2.0"></script>
-<script src="/static/app.js?v=20261123A"></script>
+<script src="/static/daily_brief.js?v=1"></script>
+<script src="/static/app.js?v=20261123B"></script>
 <script src="/static/ai_admin.js?v=20261028B"></script>
 <script src="/static/reverse_voice.js?v=20261027Q"></script>
 <script src="/static/reverse.js?v=20261027Q"></script>

@@ -167,6 +167,7 @@ function switchView(name) {
   }
   if (name === "overview") loadOverview(true);
   if (name === "reverse" && window.RV_load) window.RV_load();   // 提示词反推（reverse.js）
+  if (name === "brief") window.dailyBrief?.refresh();
   if (name === "prompt" && window.PV2) window.PV2.mount();       // 提示词优化（T106 中控台）
   if (name === "bench") loadBench(true);
   if (name === "accounts") loadAccounts(true);
@@ -200,6 +201,7 @@ function refreshActiveView() {
   const sv = $("#view-sheet");
   if (sv && sv.classList.contains("active")) { sheetViewReload(); return; }
   const v = activeViewName();
+  if (v === "brief") window.dailyBrief?.refresh();
   if (v === "bench") loadBench(true);
   if (v === "run") refreshTransBadge(); // 运行页：刷新「翻译回填」按钮的待译角标
   if (v === "accounts") loadAccounts(true);
@@ -6002,6 +6004,7 @@ function showReturnView(name) {
   }
   if (name === "accounts") loadAccounts(true);
   if (name === "overview") loadOverview(true);
+  if (name === "brief") window.dailyBrief?.refresh();
   if (name === "bench") loadBench(true);
 }
 
@@ -6031,11 +6034,13 @@ window.addEventListener("popstate", () => {
   const p = parseSheetHash(location.hash);
   if (p) { renderSheetView(p); return; }
   const name = String(location.hash || "").replace(/^#/, "");
-  if (name && $("#view-" + name)) { switchView(name); return; }
+  if (name !== "sheet" && document.getElementById("view-" + name)) { switchView(name); return; }
   const v = $("#view-sheet");
   if (v && v.classList.contains("active")) {
     showReturnView(sheetReturnView || "overview");
     restoreSheetReturnScroll();
+  } else if (!location.hash) {
+    switchView("brief");
   }
 });
 
@@ -6048,8 +6053,9 @@ window.addEventListener("popstate", () => {
 /* P2-12：首屏按 #view 直接落到对应视图（#overview / #bench / #accounts / #run …） */
 (function initViewRoute() {
   const name = String(location.hash || "").replace(/^#/, "");
-  if (!name || name === "sheet") return;
-  if ($("#view-" + name)) switchView(name);
+  if (parseSheetHash(location.hash)) return;
+  if (name !== "sheet" && document.getElementById("view-" + name)) switchView(name);
+  else window.dailyBrief?.refresh();
 })();
 
 boot();

@@ -12,9 +12,11 @@ import argparse
 import datetime as dt
 import json
 import os
+import sqlite3
 import sys
 import time
 from pathlib import Path
+import video_snapshots
 from proxy_detect import detect_proxy  # noqa: E402
 PROXY = os.environ.get("WB_PROXY") or detect_proxy()
 # 枚举条数上限（0=全量）。见 enumerate_videos 的说明：全量枚举在作品多的账号上极慢。
@@ -226,6 +228,7 @@ def main() -> int:
     ap.add_argument("--from", dest="date_from", required=True)
     ap.add_argument("--to", dest="date_to", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--snapshot-dir", type=Path, help="视频每日播放快照的共享输出目录")
     ap.add_argument("--enum-limit", type=int, default=None,
                     help=f"枚举条数上限（缺省取环境变量 TK_ENUM_LIMIT，当前 {ENUM_LIMIT}；"
                          "0=全量，很慢）")
@@ -259,6 +262,12 @@ def main() -> int:
             print(json.dumps(summary, ensure_ascii=False))
             return 0
         raise
+    if a.snapshot_dir:
+        try:
+            video_snapshots.record_enumeration(
+                a.snapshot_dir / video_snapshots.DB_NAME, a.account, entries, dt.datetime.now(GMT8))
+        except (OSError, sqlite3.Error) as e:
+            print(f"[warn] 账号列表的播放快照未保存：{e}", file=sys.stderr)
     matched = []
     no_ts = 0
     for e in entries:

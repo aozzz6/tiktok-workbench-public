@@ -178,6 +178,7 @@ def step1_download(a) -> tuple[bool, str]:
     return _subprocess_step("s1", [CFG["python"], script,
                                    "--account", a.account,
                                    "--from", a.date_from, "--to", a.date_to,
+                                   "--snapshot-dir", str(_out_dir()),
                                    "--out", str(out_dir)])
 
 

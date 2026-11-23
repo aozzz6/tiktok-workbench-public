@@ -17,6 +17,10 @@ pages from TikTok, it can talk to services you configure:
 | Short text snippets | `translate.googleapis.com` | the `translate_pending.py` path |
 | Product / trend lookups | TikTok Ads (`ads.tiktok.com`) and other third-party sites | only when those product scripts are run |
 
+The homepage lists today's publications, older videos gaining views since yesterday,
+and topics performing well across multiple tracked accounts. Open an entry to see
+the source video. Daily growth requires a measured play count on both dates.
+
 Enable **每日更新** in the sidebar to run the daily batch at a local time you choose.
 The default time is 09:30 and scheduling starts disabled on a new installation.
 Choose all enabled accounts to include newly added accounts automatically.

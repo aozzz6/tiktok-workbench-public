@@ -56,6 +56,7 @@ import datetime as dt
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import time
@@ -130,6 +131,7 @@ WORKBENCH = workbench_base()
 if str(PIPE_DIR) not in sys.path:
     sys.path.insert(0, str(PIPE_DIR))
 import receipts as R  # noqa: E402
+from scripts import video_snapshots  # noqa: E402
 
 
 def reports_root() -> Path:
@@ -659,8 +661,23 @@ def run_account(acc: dict, date_from: str, date_to: str, retry: int,
             log(f"{name} 第 {attempt} 次失败，重试中…")
 
     failed = snap.get("status") != "done"
-    scrape = _read_json(Path(acc.get("out_dir") or PIPE_DIR / "output") / f"scrape_{name}.json", {})
-    items = [i for i in (scrape.get("items") or []) if i.get("id")]
+    out_root = PIPE_DIR / "output"
+    scrape_file = Path(acc.get("out_dir") or out_root) / f"scrape_{name}.json"
+    scrape = _read_json(scrape_file, {})
+    invalid_scrape = (not isinstance(scrape, dict)
+                      or not isinstance(scrape.get("items", []), list)
+                      or not isinstance(scrape.get("errors", []), list))
+    if invalid_scrape:
+        scrape = {}
+    try:
+        # Recover a missed database write even if a later step failed. Reused
+        # merged rows retain their original observed_at, including on retries.
+        canonical_file = out_root / scrape_file.name
+        observed = (_read_json(canonical_file, scrape) if canonical_file != scrape_file else scrape)
+        video_snapshots.record_scrape(out_root / video_snapshots.DB_NAME, name, observed)
+    except (OSError, sqlite3.Error) as e:
+        log(f"[warn] {name} 播放快照未保存：{e}")
+    items = [i for i in (scrape.get("items") or []) if isinstance(i, dict) and i.get("id")]
     errors = scrape.get("errors") or []
     anomalies = []
     if failed:
@@ -676,7 +693,9 @@ def run_account(acc: dict, date_from: str, date_to: str, retry: int,
         skipped_all = True
         anomalies = [f"疑似全部步骤被断点续跑跳过（duration={dur}s），检查 no_resume"]
         log(f"[warn] {name} {anomalies[0]}")
-    status = "failed" if failed else ("warn" if (errors or skipped_all) else "ok")
+    if invalid_scrape:
+        anomalies.append(f"抓取文件结构无效：{scrape_file.name}")
+    status = "failed" if failed else ("warn" if (errors or skipped_all or invalid_scrape) else "ok")
     return {
         "status": status,
         "media_type": "image" if is_image else "video",

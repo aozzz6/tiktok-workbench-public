@@ -27,9 +27,12 @@ import datetime as dt
 import json
 import os
 import re
+import sqlite3
 import sys
 import time
 from pathlib import Path
+
+import video_snapshots
 from proxy_detect import detect_proxy  # noqa: E402
 PROXY = os.environ.get("WB_PROXY") or detect_proxy()
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -269,6 +272,7 @@ def main() -> int:
         items.append({
             "id": vid,
             "url": url,
+            "observed_at": dt.datetime.now(GMT8).isoformat(timespec="microseconds"),
             "desc": item.get("desc") or "",
             # ★ 单独提取 TikTok 话题标签（challenges[].title），不再依赖 desc 内文本
             "hashtags": [c.get("title") for c in (item.get("challenges") or [])
@@ -387,6 +391,10 @@ def main() -> int:
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(path)
+        try:
+            video_snapshots.record_scrape(out / video_snapshots.DB_NAME, a.account, result)
+        except (OSError, sqlite3.Error) as e:
+            print(f"[warn] 视频播放快照未保存，日更可从抓取记录补录：{e}", file=sys.stderr)
     # ★ 2026-10-29：门禁要用 stdout JSON，必须 ensure_ascii=True——
     #   desc 含 emoji 时 GBK 管道曾把整个脚本炸成 UnicodeEncodeError。
     print(json.dumps({"policy": a.policy, "reasons": reason_n,

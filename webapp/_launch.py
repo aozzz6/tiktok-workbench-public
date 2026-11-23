@@ -90,8 +90,8 @@ _DIAG_KEYS = ("pipeline_dir", "ledger_files")
 # ★ 独立验收 R6：启动器以前只看 health 指纹，遇到旧进程就直接复用，于是
 #   「磁盘已是新代码、进程还是旧代码」永远不自愈，而页面提示却叫人双击这个启动器。
 #   现在 health 带 api_version/features；低于要求就明确提示用真正的重启入口。
-REQUIRED_API_VERSION = 6
-REQUIRED_FEATURES = ("repair", "ai", "schedule")
+REQUIRED_API_VERSION = 7
+REQUIRED_FEATURES = ("repair", "ai", "schedule", "daily_insights")
 
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
